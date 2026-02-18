@@ -37,15 +37,11 @@ linux-arm64:
 	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/warpath
 
 # Windows builds
-windows: windows-amd64 windows-arm64
+windows: windows-amd64
 
 windows-amd64:
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/warpath
-
-windows-arm64:
-	@mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe ./cmd/warpath
 
 # macOS builds
 macos: macos-amd64 macos-arm64
@@ -87,7 +83,7 @@ help:
 	@echo "  make run       - Run the application"
 	@echo "  make all       - Build for all platforms"
 	@echo "  make linux     - Build for Linux (amd64, arm64)"
-	@echo "  make windows   - Build for Windows (amd64, arm64)"
+	@echo "  make windows   - Build for Windows (amd64)"
 	@echo "  make macos     - Build for macOS (amd64, arm64)"
 	@echo "  make clean     - Remove build artifacts"
 	@echo "  make install   - Install to GOPATH/bin"

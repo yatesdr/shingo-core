@@ -28,10 +28,6 @@ jobs:
             goarch: amd64
             suffix: windows-amd64
             archive: zip
-          - goos: windows
-            goarch: arm64
-            suffix: windows-arm64
-            archive: zip
           - goos: darwin
             goarch: amd64
             suffix: darwin-amd64
