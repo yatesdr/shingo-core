@@ -34,6 +34,19 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	knownNodes, _ := db.ListKnownNodes()
+
+	// Merge core-synced nodes into known nodes for redirect dropdown
+	coreNodes := h.engine.CoreNodes()
+	knownSet := make(map[string]bool, len(knownNodes))
+	for _, n := range knownNodes {
+		knownSet[n] = true
+	}
+	for name := range coreNodes {
+		if !knownSet[name] {
+			knownNodes = append(knownNodes, name)
+		}
+	}
+
 	anomalies, rpMap := loadAnomalyData(h)
 
 	data := map[string]interface{}{

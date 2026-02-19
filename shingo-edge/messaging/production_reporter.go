@@ -10,12 +10,10 @@ import (
 )
 
 // ProductionReporter accumulates production deltas by cat_id and periodically
-// sends production.report messages to core. Follows the Heartbeater pattern.
+// enqueues production.report messages via the outbox for reliable delivery.
 type ProductionReporter struct {
-	client    *Client
 	db        *store.DB
 	stationID string
-	topic     string // orders topic to publish on
 	interval  time.Duration
 
 	mu          sync.Mutex
@@ -26,12 +24,10 @@ type ProductionReporter struct {
 }
 
 // NewProductionReporter creates a reporter for the given edge identity.
-func NewProductionReporter(client *Client, db *store.DB, stationID, ordersTopic string) *ProductionReporter {
+func NewProductionReporter(db *store.DB, stationID string) *ProductionReporter {
 	return &ProductionReporter{
-		client:      client,
 		db:          db,
 		stationID:   stationID,
-		topic:       ordersTopic,
 		interval:    60 * time.Second,
 		accumulator: make(map[string]float64),
 		stopCh:      make(chan struct{}),
@@ -110,9 +106,14 @@ func (pr *ProductionReporter) flush() {
 		log.Printf("production_reporter: build envelope: %v", err)
 		return
 	}
-	if err := pr.client.PublishEnvelope(pr.topic, env); err != nil {
-		log.Printf("production_reporter: send report: %v", err)
+	data, err := env.Encode()
+	if err != nil {
+		log.Printf("production_reporter: encode envelope: %v", err)
+		return
+	}
+	if _, err := pr.db.EnqueueOutbox(data, protocol.SubjectProductionReport); err != nil {
+		log.Printf("production_reporter: enqueue outbox: %v", err)
 	} else {
-		log.Printf("production_reporter: sent %d cat_id entries", len(entries))
+		log.Printf("production_reporter: enqueued %d cat_id entries via outbox", len(entries))
 	}
 }

@@ -332,6 +332,7 @@ async function viewLog(id) {
   showModal('log-modal');
   try {
     var res = await fetch('/api/demands/' + id + '/log');
+    if (!res.ok) { document.getElementById('log-body').innerHTML = '<p style="color:red;">Error loading log (HTTP ' + res.status + ')</p>'; return; }
     var entries = await res.json();
     if (!entries || entries.length === 0) {
       document.getElementById('log-body').innerHTML = '<p style="color:#888;">No production reports yet.</p>';

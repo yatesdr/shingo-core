@@ -5,4 +5,5 @@ type EventEmitter interface {
 	EmitOrderCreated(orderID int64, orderUUID, orderType string)
 	EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string)
 	EmitOrderCompleted(orderID int64, orderUUID, orderType string)
+	EmitOrderFailed(orderID int64, orderUUID, orderType, reason string)
 }

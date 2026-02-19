@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"sync"
 	"time"
@@ -16,6 +18,8 @@ type Config struct {
 	LineID       string        `yaml:"line_id"`
 	DatabasePath string        `yaml:"database_path"`
 	PollRate     time.Duration `yaml:"poll_rate"`
+
+	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
 	WarLink   WarLinkConfig   `yaml:"warlink"`
 	Web       WebConfig       `yaml:"web"`
@@ -75,8 +79,9 @@ func Defaults() *Config {
 			Mode:     "sse",
 		},
 		Web: WebConfig{
-			Host: "0.0.0.0",
-			Port: 8081,
+			Host:          "0.0.0.0",
+			Port:          8081,
+			SessionSecret: generateSecret(),
 		},
 		Messaging: MessagingConfig{
 			DispatchTopic:      "shingo.dispatch",
@@ -104,6 +109,10 @@ func Load(path string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// Ensure session secret is never empty (YAML may have omitted it)
+	if cfg.Web.SessionSecret == "" {
+		cfg.Web.SessionSecret = generateSecret()
 	}
 	return cfg, nil
 }
@@ -151,3 +160,12 @@ func (c *Config) Lock() { c.mu.Lock() }
 
 // Unlock releases the config mutex.
 func (c *Config) Unlock() { c.mu.Unlock() }
+
+// generateSecret returns a random 32-byte hex-encoded string for session signing.
+func generateSecret() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "shingo-edge-fallback-secret"
+	}
+	return hex.EncodeToString(b)
+}

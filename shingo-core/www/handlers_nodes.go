@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/store"
+
+	"github.com/google/uuid"
 )
 
 // nodeSceneInfo holds parsed scene data for a node location, used in the template.
@@ -306,5 +309,87 @@ func (h *Handlers) apiNodeOccupancy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonOK(w, results)
+}
+
+func (h *Handlers) apiNodeTestOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FromNodeID int64 `json:"from_node_id"`
+		ToNodeID   int64 `json:"to_node_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.FromNodeID == req.ToNodeID {
+		h.jsonError(w, "source and destination must be different", http.StatusBadRequest)
+		return
+	}
+
+	sourceNode, err := h.engine.DB().GetNode(req.FromNodeID)
+	if err != nil {
+		h.jsonError(w, "source node not found", http.StatusNotFound)
+		return
+	}
+	destNode, err := h.engine.DB().GetNode(req.ToNodeID)
+	if err != nil {
+		h.jsonError(w, "destination node not found", http.StatusNotFound)
+		return
+	}
+
+	edgeUUID := "node-test-" + uuid.New().String()[:8]
+
+	order := &store.Order{
+		EdgeUUID:     edgeUUID,
+		StationID:    "core-node-test",
+		OrderType:    "move",
+		Status:       "pending",
+		PickupNode:   sourceNode.Name,
+		DeliveryNode: destNode.Name,
+		PayloadDesc:  "node test order from nodes page",
+	}
+	if err := h.engine.DB().CreateOrder(order); err != nil {
+		h.jsonError(w, "failed to create order: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.engine.DB().UpdateOrderStatus(order.ID, "pending", "node test order created")
+
+	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+	fleetReq := fleet.TransportOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: edgeUUID,
+		FromLoc:    sourceNode.VendorLocation,
+		ToLoc:      destNode.VendorLocation,
+	}
+
+	log.Printf("nodes: test order fleet request: %+v", fleetReq)
+
+	if _, err := h.engine.Fleet().CreateTransportOrder(fleetReq); err != nil {
+		log.Printf("nodes: test order fleet error: %v", err)
+		h.engine.DB().UpdateOrderStatus(order.ID, "failed", err.Error())
+		h.jsonError(w, "fleet dispatch failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("nodes: test order dispatched: order=%d vendor=%s", order.ID, vendorOrderID)
+
+	h.engine.DB().UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
+	h.engine.DB().UpdateOrderStatus(order.ID, "dispatched", "vendor order "+vendorOrderID)
+
+	h.engine.Events.Emit(engine.Event{
+		Type: engine.EventOrderDispatched,
+		Payload: engine.OrderDispatchedEvent{
+			OrderID:       order.ID,
+			VendorOrderID: vendorOrderID,
+			SourceNode:    sourceNode.Name,
+			DestNode:      destNode.Name,
+		},
+	})
+
+	h.jsonOK(w, map[string]any{
+		"order_id": order.ID,
+		"from":     sourceNode.Name,
+		"to":       destNode.Name,
+	})
 }
 

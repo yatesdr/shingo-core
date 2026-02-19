@@ -70,7 +70,10 @@ func (h *Handlers) apiCreateCorrection(w http.ResponseWriter, r *http.Request) {
 		corr.ManifestItemID = &req.ManifestItemID
 	}
 
-	h.engine.DB().CreateCorrection(corr)
+	if err := h.engine.DB().CreateCorrection(corr); err != nil {
+		h.jsonError(w, "failed to save correction: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	h.engine.Events.Emit(engine.Event{Type: engine.EventCorrectionApplied, Payload: engine.CorrectionAppliedEvent{
 		CorrectionID:   corr.ID,

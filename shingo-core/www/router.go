@@ -115,6 +115,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Post("/nodes/sync-scene", h.handleSceneSync)
 		// Test Orders page
 		r.Get("/test-orders", h.handleTestOrders)
+		r.Post("/api/nodes/test-order", h.apiNodeTestOrder)
 		// Kafka test orders
 		r.Get("/api/test-orders", h.apiTestOrdersList)
 		r.Get("/api/test-orders/detail", h.apiTestOrderDetail)

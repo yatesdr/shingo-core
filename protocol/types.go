@@ -28,7 +28,10 @@ const (
 	SubjectEdgeHeartbeat   = "edge.heartbeat"
 	SubjectEdgeHeartbeatAck = "edge.heartbeat_ack"
 
-	SubjectProductionReport = "production.report"
+	SubjectProductionReport    = "production.report"
+	SubjectProductionReportAck = "production.report_ack"
+
+	SubjectEdgeStale = "edge.stale"
 
 	SubjectNodeListRequest  = "node.list_request"
 	SubjectNodeListResponse = "node.list_response"

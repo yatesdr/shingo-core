@@ -83,6 +83,12 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 		log.Printf("enqueue order %s: %v", orderUUID, err)
 	}
 
+	// Auto-submit: envelope is already enqueued, so advance local state to
+	// match so that the ack from core (submitted → acknowledged) is valid.
+	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
+		log.Printf("auto-submit retrieve order %s: %v", orderUUID, err)
+	}
+
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve)
 
 	return m.db.GetOrder(orderID)
@@ -137,6 +143,12 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity float64, pickupNode
 		log.Printf("enqueue move order %s: %v", orderUUID, err)
 	}
 
+	// Auto-submit: envelope is already enqueued, so advance local state to
+	// match so that the ack from core (submitted → acknowledged) is valid.
+	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
+		log.Printf("auto-submit move order %s: %v", orderUUID, err)
+	}
+
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove)
 	return m.db.GetOrder(orderID)
 }
@@ -175,6 +187,9 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error
 
 	if IsTerminal(newStatus) {
 		m.emitter.EmitOrderCompleted(orderID, order.UUID, order.OrderType)
+		if newStatus == StatusFailed {
+			m.emitter.EmitOrderFailed(orderID, order.UUID, order.OrderType, detail)
+		}
 	}
 
 	return nil
@@ -315,9 +330,9 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return m.TransitionOrder(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
 	case "update":
-		// Status update with ETA, no state change
+		// Status update with ETA only — don't touch waybill_id.
 		if eta != "" {
-			if err := m.db.UpdateOrderWaybill(order.ID, waybillID, eta); err != nil {
+			if err := m.db.UpdateOrderETA(order.ID, eta); err != nil {
 				return err
 			}
 		}

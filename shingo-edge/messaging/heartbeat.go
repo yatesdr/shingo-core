@@ -9,6 +9,9 @@ import (
 	"shingo/protocol"
 )
 
+// ActiveOrderCountFunc returns the number of active (non-terminal) orders.
+type ActiveOrderCountFunc func() int
+
 // Heartbeater sends edge.register on startup and edge.heartbeat periodically.
 type Heartbeater struct {
 	client    *Client
@@ -18,21 +21,23 @@ type Heartbeater struct {
 	topic     string // orders topic to publish on
 	interval  time.Duration
 	startTime time.Time
+	orderCountFn ActiveOrderCountFunc
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
 }
 
 // NewHeartbeater creates a heartbeater for the given edge identity.
-func NewHeartbeater(client *Client, stationID, version string, lineIDs []string, ordersTopic string) *Heartbeater {
+func NewHeartbeater(client *Client, stationID, version string, lineIDs []string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
 	return &Heartbeater{
-		client:    client,
-		stationID: stationID,
-		version:   version,
-		lineIDs:   lineIDs,
-		topic:     ordersTopic,
-		interval:  60 * time.Second,
-		stopCh:    make(chan struct{}),
+		client:       client,
+		stationID:    stationID,
+		version:      version,
+		lineIDs:      lineIDs,
+		topic:        ordersTopic,
+		interval:     60 * time.Second,
+		orderCountFn: orderCountFn,
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -66,8 +71,8 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: build register: %v", err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.topic, env); err != nil {
-		log.Printf("heartbeater: send register: %v", err)
+	if err := h.publishWithRetry(env, "register"); err != nil {
+		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
 	}
@@ -84,11 +89,30 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: build node list request: %v", err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.topic, env); err != nil {
-		log.Printf("heartbeater: send node list request: %v", err)
+	if err := h.publishWithRetry(env, "node list request"); err != nil {
+		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
 	}
+}
+
+// publishWithRetry attempts to publish an envelope with exponential backoff (3 attempts, 2s/4s/8s).
+func (h *Heartbeater) publishWithRetry(env *protocol.Envelope, label string) error {
+	var err error
+	backoff := 2 * time.Second
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = h.client.PublishEnvelope(h.topic, env); err == nil {
+			return nil
+		}
+		log.Printf("heartbeater: %s attempt %d failed: %v (retrying in %s)", label, attempt+1, err, backoff)
+		select {
+		case <-h.stopCh:
+			return err
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return err
 }
 
 // RequestNodeSync sends a node list request to core on demand.
@@ -98,6 +122,10 @@ func (h *Heartbeater) RequestNodeSync() {
 
 func (h *Heartbeater) sendHeartbeat() {
 	uptime := int64(time.Since(h.startTime).Seconds())
+	var activeOrders int
+	if h.orderCountFn != nil {
+		activeOrders = h.orderCountFn()
+	}
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
@@ -105,6 +133,7 @@ func (h *Heartbeater) sendHeartbeat() {
 		&protocol.EdgeHeartbeat{
 			StationID: h.stationID,
 			Uptime:    uptime,
+			Orders:    activeOrders,
 		},
 	)
 	if err != nil {

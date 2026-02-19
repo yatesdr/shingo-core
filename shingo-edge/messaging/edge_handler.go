@@ -53,6 +53,20 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			}
 			h.onCoreNodes(names)
 		}
+	case protocol.SubjectProductionReportAck:
+		var ack protocol.ProductionReportAck
+		if err := json.Unmarshal(p.Body, &ack); err != nil {
+			log.Printf("edge_handler: decode production report ack: %v", err)
+			return
+		}
+		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
+	case protocol.SubjectEdgeStale:
+		var stale protocol.EdgeStale
+		if err := json.Unmarshal(p.Body, &stale); err != nil {
+			log.Printf("edge_handler: decode stale notification: %v", err)
+			return
+		}
+		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s", stale.Message)
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
 	}

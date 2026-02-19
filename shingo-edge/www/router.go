@@ -120,10 +120,11 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 	r.Post("/login", h.handleLogin)
 	r.Post("/logout", h.handleLogout)
 
-	// Setup (admin-only)
+	// Admin-only pages
 	r.Group(func(r chi.Router) {
 		r.Use(h.adminMiddleware)
 		r.Get("/setup", h.handleSetup)
+		r.Get("/manual-message", h.handleManualMessage)
 	})
 
 	// API endpoints (mixed: some public for shop floor, some admin-only)
@@ -147,6 +148,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Put("/payloads/{id}/reorder-point", h.apiUpdateReorderPoint)
 		r.Put("/payloads/{id}/auto-reorder", h.apiToggleAutoReorder)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
+		r.Get("/core-nodes", h.apiGetCoreNodes)
 
 		// Admin API (setup mutations)
 		r.Group(func(r chi.Router) {
@@ -196,7 +198,6 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 			r.Delete("/location-nodes/{id}", h.apiDeleteLocationNode)
 
 			// Core nodes
-			r.Get("/core-nodes", h.apiGetCoreNodes)
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
 
 			// Shifts
@@ -209,6 +210,9 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 			r.Post("/config/kafka/test", h.apiTestKafka)
 			r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
 			r.Post("/config/password", h.apiChangePassword)
+
+			// Manual message
+			r.Post("/manual-message", h.apiSendManualMessage)
 		})
 	})
 

@@ -159,3 +159,15 @@ type ProductionReport struct {
 	StationID string                  `json:"station_id"`
 	Reports   []ProductionReportEntry `json:"reports"`
 }
+
+// ProductionReportAck acknowledges processing of a production report.
+type ProductionReportAck struct {
+	StationID string `json:"station_id"`
+	Accepted  int    `json:"accepted"`
+}
+
+// EdgeStale is sent by core to notify an edge that it has been marked stale.
+type EdgeStale struct {
+	StationID string `json:"station_id"`
+	Message   string `json:"message"`
+}

@@ -32,6 +32,25 @@ func NewMachine(db *store.DB, emitter EventEmitter, lineID int64, lineName strin
 	}
 }
 
+// Restore rebuilds the machine state from the last changeover log entry.
+// If the last logged state is not "running", the changeover is resumed.
+func (m *Machine) Restore() {
+	entry, err := m.db.GetLatestChangeoverState(m.lineID)
+	if err != nil || entry == nil {
+		return // no history, start fresh
+	}
+	if entry.State == StateRunning {
+		return // last changeover completed normally
+	}
+	m.mu.Lock()
+	m.fromJobStyle = entry.FromJobStyle
+	m.toJobStyle = entry.ToJobStyle
+	m.state = entry.State
+	m.active = true
+	m.mu.Unlock()
+	log.Printf("changeover: restored in-progress changeover for line %d (state=%s, %s→%s)", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
+}
+
 // LineID returns the production line ID for this machine.
 func (m *Machine) LineID() int64 {
 	return m.lineID
@@ -114,7 +133,7 @@ func (m *Machine) Advance(operator string) error {
 }
 
 // Cancel aborts the current changeover and resets to running.
-func (m *Machine) Cancel() error {
+func (m *Machine) Cancel(operator string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -123,12 +142,15 @@ func (m *Machine) Cancel() error {
 	}
 
 	oldState := m.state
+	from, to := m.fromJobStyle, m.toJobStyle
 	m.state = StateRunning
 	m.active = false
+	m.fromJobStyle = ""
+	m.toJobStyle = ""
 
-	m.logTransition(oldState, StateRunning, "changeover cancelled", "")
-	m.emitter.EmitChangeoverStateChanged(m.lineID, m.fromJobStyle, m.toJobStyle, oldState, StateRunning)
-	m.emitter.EmitChangeoverCompleted(m.lineID, m.fromJobStyle, m.toJobStyle)
+	m.logTransition(oldState, StateRunning, "changeover cancelled", operator)
+	m.emitter.EmitChangeoverStateChanged(m.lineID, from, to, oldState, StateRunning)
+	m.emitter.EmitChangeoverCancelled(m.lineID, from, to, operator)
 
 	return nil
 }

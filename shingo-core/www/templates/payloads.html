@@ -263,7 +263,7 @@ function closePayloadModal() {
 function loadManifest(payloadID) {
   var list = document.getElementById('pm-manifest-list');
   fetch('/api/payloads/manifest?id=' + payloadID)
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
         list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">No manifest items</span>';
@@ -273,8 +273,8 @@ function loadManifest(payloadID) {
       if (isAuth) html += '<th></th>';
       html += '</tr></thead><tbody>';
       items.forEach(function(item) {
-        html += '<tr><td>' + esc(item.PartNumber) + '</td><td>' + item.Quantity + '</td><td>' + (item.ProductionDate || '-') + '</td><td>' + (item.LotCode || '-') + '</td><td>' + esc(item.Notes) + '</td>';
-        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" onclick="deleteManifestItem(' + item.ID + ')" style="font-size:0.7rem;padding:0.1rem 0.3rem">X</button></td>';
+        html += '<tr><td>' + esc(item.part_number) + '</td><td>' + item.quantity + '</td><td>' + (item.production_date || '-') + '</td><td>' + (item.lot_code || '-') + '</td><td>' + esc(item.notes) + '</td>';
+        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" onclick="deleteManifestItem(' + item.id + ')" style="font-size:0.7rem;padding:0.1rem 0.3rem">X</button></td>';
         html += '</tr>';
       });
       html += '</tbody></table>';
@@ -295,7 +295,7 @@ function addManifestItem() {
     notes: document.getElementById('mi-notes').value
   };
   fetch('/api/payloads/manifest/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function() {
       document.getElementById('mi-part').value = '';
       document.getElementById('mi-qty').value = '';
@@ -303,13 +303,16 @@ function addManifestItem() {
       document.getElementById('mi-lot').value = '';
       document.getElementById('mi-notes').value = '';
       loadManifest(currentPayloadID);
-    });
+    })
+    .catch(function(e) { alert('Error: ' + e); });
 }
 
 function deleteManifestItem(id) {
   if (!confirm('Delete this manifest item?')) return;
   fetch('/api/payloads/manifest/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})})
-    .then(function() { loadManifest(currentPayloadID); });
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function() { loadManifest(currentPayloadID); })
+    .catch(function(e) { alert('Error: ' + e); });
 }
 
 function editPayload(btn) {

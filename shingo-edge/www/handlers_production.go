@@ -116,11 +116,10 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiListShifts(w http.ResponseWriter, r *http.Request) {
 	shifts, err := h.engine.DB().ListShifts()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(shifts)
+	writeJSON(w, shifts)
 }
 
 func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +130,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 		EndTime     string `json:"end_time"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&shifts); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -145,7 +144,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := db.UpsertShift(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
@@ -169,10 +168,8 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 
 	counts, err := h.engine.DB().HourlyCountTotals(lineID, dateStr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(counts)
+	writeJSON(w, counts)
 }

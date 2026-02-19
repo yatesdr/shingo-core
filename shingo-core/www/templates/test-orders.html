@@ -285,14 +285,14 @@ function populateLocationDropdown(cmdType) {
   var sel = document.getElementById('c-location');
   sel.innerHTML = '<option value="">-- select --</option>';
   var filtered = scenePoints.filter(function(sp) {
-    if (cmdType === 'charge') return sp.ClassName === 'ChargePoint';
-    return sp.ClassName === 'GeneralLocation';
+    if (cmdType === 'charge') return sp.class_name === 'ChargePoint';
+    return sp.class_name === 'GeneralLocation';
   });
   for (var i = 0; i < filtered.length; i++) {
     var sp = filtered[i];
     var opt = document.createElement('option');
-    opt.value = sp.InstanceName;
-    opt.textContent = sp.InstanceName + (sp.Label ? ' (' + sp.Label + ')' : '');
+    opt.value = sp.instance_name;
+    opt.textContent = sp.instance_name + (sp.label ? ' (' + sp.label + ')' : '');
     sel.appendChild(opt);
   }
   if (filtered.length === 0) {
@@ -323,25 +323,25 @@ function renderOrdersTable(orders, containerId, isKafka) {
   html += '</tr></thead><tbody>';
   for (var i = 0; i < orders.length; i++) {
     var o = orders[i];
-    var isActive = ['pending','sourcing','dispatched','in_transit','delivered'].indexOf(o.Status) >= 0;
-    var isDelivered = o.Status === 'delivered';
+    var isActive = ['pending','sourcing','dispatched','in_transit','delivered'].indexOf(o.status) >= 0;
+    var isDelivered = o.status === 'delivered';
     html += '<tr>';
-    html += '<td>' + o.ID + '</td>';
-    html += '<td style="font-size:.8rem;">' + esc(o.EdgeUUID) + '</td>';
-    html += '<td>' + esc(o.OrderType) + '</td>';
-    html += '<td>' + statusBadge(o.Status) + '</td>';
-    html += '<td>' + statusBadge(o.VendorState) + '</td>';
-    html += '<td>' + esc(o.RobotID) + '</td>';
-    html += '<td style="font-size:.85rem;">' + esc(o.PickupNode || '-') + ' &rarr; ' + esc(o.DeliveryNode || '-') + '</td>';
-    html += '<td style="font-size:.8rem;">' + fmtTime(o.CreatedAt) + '</td>';
+    html += '<td>' + o.id + '</td>';
+    html += '<td style="font-size:.8rem;">' + esc(o.edge_uuid) + '</td>';
+    html += '<td>' + esc(o.order_type) + '</td>';
+    html += '<td>' + statusBadge(o.status) + '</td>';
+    html += '<td>' + statusBadge(o.vendor_state) + '</td>';
+    html += '<td>' + esc(o.robot_id) + '</td>';
+    html += '<td style="font-size:.85rem;">' + esc(o.pickup_node || '-') + ' &rarr; ' + esc(o.delivery_node || '-') + '</td>';
+    html += '<td style="font-size:.8rem;">' + fmtTime(o.created_at) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
-      html += '<button class="to-btn-sm" onclick="viewHistory(' + o.ID + ')">History</button>';
+      html += '<button class="to-btn-sm" onclick="viewHistory(' + o.id + ')">History</button>';
       if (isKafka && isActive) {
-        html += '<button class="to-btn-sm to-btn-danger" onclick="cancelOrder(\'' + esc(o.EdgeUUID) + '\')">Cancel</button>';
+        html += '<button class="to-btn-sm to-btn-danger" onclick="cancelOrder(\'' + esc(o.edge_uuid) + '\')">Cancel</button>';
       }
       if (isKafka && isDelivered) {
-        html += '<button class="to-btn-sm" onclick="openReceipt(\'' + esc(o.EdgeUUID) + '\')">Receipt</button>';
+        html += '<button class="to-btn-sm" onclick="openReceipt(\'' + esc(o.edge_uuid) + '\')">Receipt</button>';
       }
       html += '</td>';
     }
@@ -388,6 +388,7 @@ function renderCommandsTable(cmds) {
 async function refreshKafkaOrders() {
   try {
     var res = await fetch('/api/test-orders');
+    if (!res.ok) { console.error('refresh kafka orders: HTTP', res.status); return; }
     var data = await res.json();
     renderOrdersTable(data, 'kafka-orders-table', true);
   } catch(e) { console.error('refresh kafka orders:', e); }
@@ -396,6 +397,7 @@ async function refreshKafkaOrders() {
 async function refreshDirectOrders() {
   try {
     var res = await fetch('/api/test-orders/direct');
+    if (!res.ok) { console.error('refresh direct orders: HTTP', res.status); return; }
     var data = await res.json();
     renderOrdersTable(data, 'direct-orders-table', false);
   } catch(e) { console.error('refresh direct orders:', e); }
@@ -404,6 +406,7 @@ async function refreshDirectOrders() {
 async function refreshCommands() {
   try {
     var res = await fetch('/api/test-commands');
+    if (!res.ok) { console.error('refresh commands: HTTP', res.status); return; }
     var data = await res.json();
     renderCommandsTable(data);
   } catch(e) { console.error('refresh commands:', e); }
@@ -535,12 +538,12 @@ async function viewHistory(orderId) {
     if (data.order) {
       var o = data.order;
       html += '<div style="margin-bottom:1rem;font-size:.9rem;">';
-      html += '<strong>UUID:</strong> ' + esc(o.EdgeUUID) + '<br>';
-      html += '<strong>Type:</strong> ' + esc(o.OrderType) + ' &nbsp; <strong>Status:</strong> ' + statusBadge(o.Status) + '<br>';
-      html += '<strong>Vendor:</strong> ' + esc(o.VendorOrderID || '-') + ' ' + statusBadge(o.VendorState) + '<br>';
-      html += '<strong>Robot:</strong> ' + esc(o.RobotID || '-') + '<br>';
-      html += '<strong>Route:</strong> ' + esc(o.PickupNode || '-') + ' &rarr; ' + esc(o.DeliveryNode || '-') + '<br>';
-      if (o.ErrorDetail) html += '<strong>Error:</strong> <span style="color:#dc3545;">' + esc(o.ErrorDetail) + '</span><br>';
+      html += '<strong>UUID:</strong> ' + esc(o.edge_uuid) + '<br>';
+      html += '<strong>Type:</strong> ' + esc(o.order_type) + ' &nbsp; <strong>Status:</strong> ' + statusBadge(o.status) + '<br>';
+      html += '<strong>Vendor:</strong> ' + esc(o.vendor_order_id || '-') + ' ' + statusBadge(o.vendor_state) + '<br>';
+      html += '<strong>Robot:</strong> ' + esc(o.robot_id || '-') + '<br>';
+      html += '<strong>Route:</strong> ' + esc(o.pickup_node || '-') + ' &rarr; ' + esc(o.delivery_node || '-') + '<br>';
+      if (o.error_detail) html += '<strong>Error:</strong> <span style="color:#dc3545;">' + esc(o.error_detail) + '</span><br>';
       html += '</div>';
     }
 
@@ -548,7 +551,7 @@ async function viewHistory(orderId) {
       html += '<table class="table"><thead><tr><th>Status</th><th>Detail</th><th>Time</th></tr></thead><tbody>';
       for (var i = 0; i < data.history.length; i++) {
         var h = data.history[i];
-        html += '<tr><td>' + statusBadge(h.Status) + '</td><td style="font-size:.85rem;">' + esc(h.Detail) + '</td><td style="font-size:.8rem;">' + fmtTime(h.CreatedAt) + '</td></tr>';
+        html += '<tr><td>' + statusBadge(h.status) + '</td><td style="font-size:.85rem;">' + esc(h.detail) + '</td><td style="font-size:.8rem;">' + fmtTime(h.created_at) + '</td></tr>';
       }
       html += '</tbody></table>';
     } else {

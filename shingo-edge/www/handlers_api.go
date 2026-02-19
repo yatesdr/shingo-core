@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"time"
 
-	"shingoedge/orders"
-
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/engine"
 )
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -43,7 +43,10 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FinalCount float64 `json:"final_count"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := h.engine.OrderManager().ConfirmDelivery(orderID, req.FinalCount); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -121,6 +124,19 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Auto-set count and submit so the order actually gets sent to core.
+	// The normal kanban workflow has a separate count-confirm step, but
+	// manual/ad-hoc store orders should go out immediately.
+	if err := h.engine.DB().UpdateOrderFinalCount(order.ID, req.Quantity, true); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.engine.OrderManager().SubmitOrder(order.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	writeJSON(w, order)
 }
 
@@ -175,7 +191,9 @@ func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid order ID")
 		return
 	}
-	if err := h.engine.OrderManager().TransitionOrder(orderID, orders.StatusCancelled, "cancelled by operator"); err != nil {
+	// Use AbortOrder so a cancel envelope is sent to core, not just a
+	// local state transition.
+	if err := h.engine.OrderManager().AbortOrder(orderID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -368,7 +386,8 @@ func (h *Handlers) apiChangeoverAdvance(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handlers) apiChangeoverCancel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LineID int64 `json:"line_id"`
+		LineID   int64  `json:"line_id"`
+		Operator string `json:"operator"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -383,7 +402,7 @@ func (h *Handlers) apiChangeoverCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "production line not found")
 		return
 	}
-	if err := m.Cancel(); err != nil {
+	if err := m.Cancel(req.Operator); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -960,6 +979,19 @@ func (h *Handlers) apiPayloadCount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Emit event so SSE listeners (material page) update in real time
+	h.engine.Events.Emit(engine.Event{
+		Type: engine.EventPayloadUpdated,
+		Payload: engine.PayloadUpdatedEvent{
+			PayloadID:    id,
+			JobStyleID:   p.JobStyleID,
+			Location:     p.Location,
+			OldRemaining: p.Remaining,
+			NewRemaining: prodUnits,
+			Status:       status,
+		},
+	})
 
 	writeJSON(w, map[string]interface{}{
 		"status":           "ok",

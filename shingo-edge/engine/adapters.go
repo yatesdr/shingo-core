@@ -11,9 +11,9 @@ func (e *plcEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value 
 	}})
 }
 
-func (e *plcEmitter) EmitCounterDelta(rpID, lineID, jobStyleID, delta, newCount int64) {
+func (e *plcEmitter) EmitCounterDelta(rpID, lineID, jobStyleID, delta, newCount int64, anomaly string) {
 	e.bus.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
-		ReportingPointID: rpID, LineID: lineID, JobStyleID: jobStyleID, Delta: delta, NewCount: newCount,
+		ReportingPointID: rpID, LineID: lineID, JobStyleID: jobStyleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
 	}})
 }
 
@@ -43,6 +43,12 @@ func (e *plcEmitter) EmitPLCHealthAlert(plcName string, errMsg string) {
 
 func (e *plcEmitter) EmitPLCHealthRecover(plcName string) {
 	e.bus.Emit(Event{Type: EventPLCHealthRecover, Payload: PLCHealthRecoverEvent{PLCName: plcName}})
+}
+
+func (e *plcEmitter) EmitCounterReadError(rpID int64, plcName, tagName, errMsg string) {
+	e.bus.Emit(Event{Type: EventCounterReadError, Payload: CounterReadErrorEvent{
+		ReportingPointID: rpID, PLCName: plcName, TagName: tagName, Error: errMsg,
+	}})
 }
 
 func (e *plcEmitter) EmitWarLinkConnected() {
@@ -80,6 +86,12 @@ func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType st
 	}})
 }
 
+func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reason string) {
+	e.bus.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,
+	}})
+}
+
 // changeoverEmitter adapts the engine's EventBus to the changeover.EventEmitter interface.
 type changeoverEmitter struct {
 	bus *EventBus
@@ -100,5 +112,11 @@ func (e *changeoverEmitter) EmitChangeoverStateChanged(lineID int64, fromJobStyl
 func (e *changeoverEmitter) EmitChangeoverCompleted(lineID int64, fromJobStyle, toJobStyle string) {
 	e.bus.Emit(Event{Type: EventChangeoverCompleted, Payload: ChangeoverCompletedEvent{
 		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle,
+	}})
+}
+
+func (e *changeoverEmitter) EmitChangeoverCancelled(lineID int64, fromJobStyle, toJobStyle, operator string) {
+	e.bus.Emit(Event{Type: EventChangeoverCancelled, Payload: ChangeoverCancelledEvent{
+		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle, Operator: operator,
 	}})
 }

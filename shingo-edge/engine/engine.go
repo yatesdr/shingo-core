@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"
+
+	"shingo/protocol"
 )
 
 // LogFunc is the logging callback signature.
@@ -35,6 +38,7 @@ type Engine struct {
 	coreNodes   map[string]bool
 	coreNodesMu sync.RWMutex
 	nodeSyncFn  func()
+	sendFn      func(*protocol.Envelope) error
 
 	Events   *EventBus
 	stopChan chan struct{}
@@ -81,7 +85,7 @@ func (e *Engine) Start() {
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
-	e.hourlyTracker = NewHourlyTracker(e.db)
+	e.hourlyTracker = NewHourlyTracker(e.db, e.cfg.Timezone)
 
 	// Initialize changeover machines for all production lines
 	lines, err := e.db.ListProductionLines()
@@ -89,7 +93,9 @@ func (e *Engine) Start() {
 		log.Printf("load production lines for changeover: %v", err)
 	}
 	for _, line := range lines {
-		e.changeoverMgrs[line.ID] = changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
+		m := changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
+		m.Restore()
+		e.changeoverMgrs[line.ID] = m
 	}
 
 	// Wire the event chain
@@ -165,6 +171,7 @@ func (e *Engine) ChangeoverMachine(lineID int64) *changeover.Machine {
 		return m
 	}
 	m = changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
+	m.Restore()
 	e.changeoverMgrs[lineID] = m
 	return m
 }
@@ -217,4 +224,17 @@ func (e *Engine) RequestNodeSync() {
 	if e.nodeSyncFn != nil {
 		e.nodeSyncFn()
 	}
+}
+
+// SetSendFunc sets the function used to publish protocol envelopes.
+func (e *Engine) SetSendFunc(fn func(*protocol.Envelope) error) {
+	e.sendFn = fn
+}
+
+// SendEnvelope publishes a protocol envelope via the configured send function.
+func (e *Engine) SendEnvelope(env *protocol.Envelope) error {
+	if e.sendFn == nil {
+		return fmt.Errorf("send function not configured (messaging not connected)")
+	}
+	return e.sendFn(env)
 }

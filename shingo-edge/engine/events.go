@@ -10,20 +10,24 @@ const (
 	EventCounterRead EventType = iota + 1
 	EventCounterDelta
 	EventCounterAnomaly
+	EventCounterReadError
 
 	// Payload events
 	EventPayloadUpdated
 	EventPayloadReorder
+	EventPayloadEmpty
 
 	// Order events
 	EventOrderCreated
 	EventOrderStatusChanged
 	EventOrderCompleted
+	EventOrderFailed
 
 	// Changeover events
 	EventChangeoverStarted
 	EventChangeoverStateChanged
 	EventChangeoverCompleted
+	EventChangeoverCancelled
 
 	// PLC events
 	EventPLCConnected
@@ -61,6 +65,7 @@ type CounterDeltaEvent struct {
 	JobStyleID       int64
 	Delta            int64
 	NewCount         int64
+	Anomaly          string // "reset" if from a PLC counter reset, "" for normal
 }
 
 // CounterAnomalyEvent is emitted for counter resets or jumps.
@@ -172,4 +177,36 @@ type WarLinkEvent struct {
 // CoreNodesUpdatedEvent is emitted when the core node list is received.
 type CoreNodesUpdatedEvent struct {
 	Nodes []string `json:"nodes"`
+}
+
+// CounterReadErrorEvent is emitted when a tag read fails.
+type CounterReadErrorEvent struct {
+	ReportingPointID int64  `json:"reporting_point_id"`
+	PLCName          string `json:"plc_name"`
+	TagName          string `json:"tag_name"`
+	Error            string `json:"error"`
+}
+
+// PayloadEmptyEvent is emitted when a payload's remaining count hits zero.
+type PayloadEmptyEvent struct {
+	PayloadID  int64  `json:"payload_id"`
+	LineID     int64  `json:"line_id"`
+	JobStyleID int64  `json:"job_style_id"`
+	Location   string `json:"location"`
+}
+
+// OrderFailedEvent is emitted when an order transitions to failed state.
+type OrderFailedEvent struct {
+	OrderID   int64  `json:"order_id"`
+	OrderUUID string `json:"order_uuid"`
+	OrderType string `json:"order_type"`
+	Reason    string `json:"reason"`
+}
+
+// ChangeoverCancelledEvent is emitted when a changeover is cancelled (distinct from completion).
+type ChangeoverCancelledEvent struct {
+	LineID       int64  `json:"line_id"`
+	FromJobStyle string `json:"from_job_style"`
+	ToJobStyle   string `json:"to_job_style"`
+	Operator     string `json:"operator"`
 }

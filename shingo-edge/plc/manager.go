@@ -239,19 +239,16 @@ func (m *Manager) warlinkPollTick() {
 	for _, p := range plcs {
 		seen[p.Name] = true
 
-		m.mu.RLock()
+		m.mu.Lock()
 		existing, exists := m.plcs[p.Name]
-		m.mu.RUnlock()
-
 		if !exists {
 			existing = &ManagedPLC{
 				Name:   p.Name,
 				Values: make(map[string]TagValue),
 			}
-			m.mu.Lock()
 			m.plcs[p.Name] = existing
-			m.mu.Unlock()
 		}
+		m.mu.Unlock()
 
 		existing.mu.Lock()
 		oldStatus := existing.Status
@@ -511,7 +508,11 @@ func (m *Manager) Stop() {
 
 func (m *Manager) pollLoop() {
 	defer m.wg.Done()
-	ticker := time.NewTicker(m.cfg.PollRate)
+	pollRate := m.cfg.PollRate
+	if pollRate <= 0 {
+		pollRate = time.Second
+	}
+	ticker := time.NewTicker(pollRate)
 	defer ticker.Stop()
 
 	for {
@@ -539,6 +540,8 @@ func (m *Manager) pollAllReportingPoints() {
 func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
+		log.Printf("read tag %s/%s (rp %d): %v", rp.PLCName, rp.TagName, rp.ID, err)
+		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, err.Error())
 		return
 	}
 
@@ -583,7 +586,7 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 
 	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
 	if anomaly != "jump" && delta > 0 {
-		m.emitter.EmitCounterDelta(rp.ID, lineID, effectiveJSID, delta, newCount)
+		m.emitter.EmitCounterDelta(rp.ID, lineID, effectiveJSID, delta, newCount, anomaly)
 	}
 }
 

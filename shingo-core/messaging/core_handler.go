@@ -186,16 +186,35 @@ func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *proto
 
 func (h *CoreHandler) handleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
 	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
+	accepted := 0
 	for _, entry := range rpt.Reports {
 		if entry.CatID == "" || entry.Count <= 0 {
 			continue
 		}
 		if err := h.db.IncrementProduced(entry.CatID, entry.Count); err != nil {
 			log.Printf("core_handler: increment produced %s: %v", entry.CatID, err)
+			continue
 		}
 		if err := h.db.LogProduction(entry.CatID, rpt.StationID, entry.Count); err != nil {
 			log.Printf("core_handler: log production %s: %v", entry.CatID, err)
 		}
+		accepted++
+	}
+
+	// Send acknowledgment back to edge
+	reply, err := protocol.NewDataReply(
+		protocol.SubjectProductionReportAck,
+		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleEdge, Station: rpt.StationID},
+		env.ID,
+		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted},
+	)
+	if err != nil {
+		log.Printf("core_handler: build production report ack: %v", err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
+		log.Printf("core_handler: publish production report ack: %v", err)
 	}
 }
 
@@ -207,12 +226,31 @@ func (h *CoreHandler) staleEdgeLoop() {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			n, err := h.db.MarkStaleEdges(180 * time.Second)
+			staleIDs, err := h.db.MarkStaleEdges(180 * time.Second)
 			if err != nil {
 				log.Printf("core_handler: mark stale edges: %v", err)
-			} else if n > 0 {
-				log.Printf("core_handler: marked %d edge(s) stale", n)
+				continue
+			}
+			for _, sid := range staleIDs {
+				log.Printf("core_handler: edge %s marked stale, sending notification", sid)
+				h.sendStaleNotification(sid)
 			}
 		}
+	}
+}
+
+func (h *CoreHandler) sendStaleNotification(stationID string) {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectEdgeStale,
+		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleEdge, Station: stationID},
+		&protocol.EdgeStale{StationID: stationID, Message: "heartbeat timeout — marked stale by core"},
+	)
+	if err != nil {
+		log.Printf("core_handler: build stale notification for %s: %v", stationID, err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.dispatchTopic, env); err != nil {
+		log.Printf("core_handler: publish stale notification for %s: %v", stationID, err)
 	}
 }

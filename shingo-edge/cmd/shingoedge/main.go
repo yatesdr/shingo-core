@@ -68,6 +68,11 @@ func main() {
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("messaging connect: %v (will retry via outbox)", err)
 	} else {
+		// Wire send function so web handlers can publish envelopes directly
+		eng.SetSendFunc(func(env *protocol.Envelope) error {
+			return msgClient.PublishEnvelope(cfg.Messaging.OrdersTopic, env)
+		})
+
 		// Start outbox drainer
 		drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
 		drainer.Start()
@@ -90,15 +95,17 @@ func main() {
 		}
 
 		// Heartbeater (registration + periodic heartbeat)
-		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic)
+		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
+			return db.CountActiveOrders()
+		})
 		hb.Start()
 		defer hb.Stop()
 
 		// Wire node sync so edge UI can trigger a re-request
 		eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
-		// Production reporter (accumulates deltas, sends periodic reports to core)
-		reporter := messaging.NewProductionReporter(msgClient, db, stationID, cfg.Messaging.OrdersTopic)
+		// Production reporter (accumulates deltas, enqueues periodic reports via outbox)
+		reporter := messaging.NewProductionReporter(db, stationID)
 		eng.Events.SubscribeTypes(func(evt engine.Event) {
 			if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
 				reporter.RecordDelta(delta.JobStyleID, delta.Delta)

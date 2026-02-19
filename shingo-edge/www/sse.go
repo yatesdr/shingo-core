@@ -167,7 +167,7 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventCounterAnomaly:
 			p := evt.Payload.(engine.CounterAnomalyEvent)
 			sseEvt = SSEEvent{Type: "counter-anomaly", Data: p}
-		case engine.EventChangeoverStarted, engine.EventChangeoverStateChanged, engine.EventChangeoverCompleted:
+		case engine.EventChangeoverStarted, engine.EventChangeoverStateChanged, engine.EventChangeoverCompleted, engine.EventChangeoverCancelled:
 			sseEvt = SSEEvent{Type: "changeover-update", Data: evt.Payload}
 		case engine.EventCounterRead:
 			p := evt.Payload.(engine.CounterReadEvent)
@@ -190,6 +190,15 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventCoreNodesUpdated:
 			p := evt.Payload.(engine.CoreNodesUpdatedEvent)
 			sseEvt = SSEEvent{Type: "core-nodes", Data: p}
+		case engine.EventCounterReadError:
+			p := evt.Payload.(engine.CounterReadErrorEvent)
+			sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
+		case engine.EventPayloadEmpty:
+			p := evt.Payload.(engine.PayloadEmptyEvent)
+			sseEvt = SSEEvent{Type: "payload-empty", Data: p}
+		case engine.EventOrderFailed:
+			p := evt.Payload.(engine.OrderFailedEvent)
+			sseEvt = SSEEvent{Type: "order-failed", Data: p}
 		default:
 			return
 		}

@@ -54,12 +54,22 @@ func (d *OutboxDrainer) drainLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	cycles := 0
 	for {
 		select {
 		case <-d.stopChan:
 			return
 		case <-ticker.C:
 			d.drain()
+			cycles++
+			// Purge old sent/dead-lettered messages every ~100 cycles
+			if cycles%100 == 0 {
+				if n, err := d.db.PurgeOldOutbox(24 * time.Hour); err != nil {
+					log.Printf("purge old outbox: %v", err)
+				} else if n > 0 {
+					log.Printf("purged %d old outbox messages", n)
+				}
+			}
 		}
 	}
 }
@@ -78,8 +88,12 @@ func (d *OutboxDrainer) drain() {
 	for _, msg := range msgs {
 		topic := d.cfg.OrdersTopic
 		if err := d.client.Publish(topic, msg.Payload); err != nil {
-			log.Printf("publish outbox msg %d: %v", msg.ID, err)
 			d.db.IncrementOutboxRetries(msg.ID)
+			if msg.Retries+1 >= store.MaxOutboxRetries {
+				log.Printf("outbox msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)
+			} else {
+				log.Printf("publish outbox msg %d (retry %d/%d): %v", msg.ID, msg.Retries+1, store.MaxOutboxRetries, err)
+			}
 			continue
 		}
 		if err := d.db.AckOutbox(msg.ID); err != nil {

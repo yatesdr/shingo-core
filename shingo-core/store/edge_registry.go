@@ -72,10 +72,39 @@ func (db *DB) ListEdges() ([]EdgeRegistration, error) {
 	return edges, rows.Err()
 }
 
-// MarkStaleEdges sets status to "stale" for edges whose last_heartbeat is older than the given threshold.
-func (db *DB) MarkStaleEdges(threshold time.Duration) (int64, error) {
+// MarkStaleEdges sets status to "stale" for edges whose last_heartbeat is older
+// than the given threshold. Returns the station IDs that were marked stale.
+func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
 	cutoff := time.Now().Add(-threshold).Format("2006-01-02 15:04:05")
-	result, err := db.Exec(db.Q(`
+
+	// Find which stations will go stale
+	rows, err := db.Query(db.Q(`
+		SELECT station_id FROM edge_registry
+		WHERE status = 'active'
+		  AND last_heartbeat IS NOT NULL
+		  AND last_heartbeat < ?
+	`), cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var staleIDs []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		staleIDs = append(staleIDs, sid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(staleIDs) == 0 {
+		return nil, nil
+	}
+
+	// Mark them stale
+	_, err = db.Exec(db.Q(`
 		UPDATE edge_registry
 		SET status = 'stale'
 		WHERE status = 'active'
@@ -83,7 +112,7 @@ func (db *DB) MarkStaleEdges(threshold time.Duration) (int64, error) {
 		  AND last_heartbeat < ?
 	`), cutoff)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	return staleIDs, nil
 }

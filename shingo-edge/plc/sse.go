@@ -142,18 +142,41 @@ func (m *Manager) sseConnect() error {
 		m.emitter.EmitWarLinkConnected()
 	}
 
+	// Stall detection: cancel the SSE context if no data arrives within 120s.
+	// This catches silent TCP drops that leave the reader blocked forever.
+	const stallTimeout = 120 * time.Second
+	stallTimer := time.NewTimer(stallTimeout)
+	defer stallTimer.Stop()
+	go func() {
+		select {
+		case <-stallTimer.C:
+			log.Printf("WarLink SSE stall detected (no data for %s), reconnecting", stallTimeout)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	reader := NewSSEReader(resp.Body)
 	for {
 		ev, err := reader.Next()
 		if err != nil {
 			if err == io.EOF || ctx.Err() != nil {
 				if ctx.Err() != nil {
-					return nil // clean shutdown
+					return nil // clean shutdown or stall timeout
 				}
 				return fmt.Errorf("SSE stream EOF")
 			}
 			return fmt.Errorf("SSE read: %w", err)
 		}
+
+		// Reset stall timer on every event (including comments/keepalives)
+		if !stallTimer.Stop() {
+			select {
+			case <-stallTimer.C:
+			default:
+			}
+		}
+		stallTimer.Reset(stallTimeout)
 
 		switch ev.Event {
 		case "value-change":

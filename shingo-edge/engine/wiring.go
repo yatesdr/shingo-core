@@ -67,6 +67,12 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			OldRemaining: oldRemaining, NewRemaining: newRemaining, Status: status,
 		}})
 
+		if newRemaining == 0 && oldRemaining > 0 {
+			e.Events.Emit(Event{Type: EventPayloadEmpty, Payload: PayloadEmptyEvent{
+				PayloadID: p.ID, LineID: delta.LineID, JobStyleID: p.JobStyleID, Location: p.Location,
+			}})
+		}
+
 		// Edge trigger: crossed reorder point (gated on auto-reorder)
 		if p.AutoReorder && oldRemaining > p.ReorderPoint && newRemaining <= p.ReorderPoint && p.Status != "replenishing" {
 			if err := e.db.UpdatePayloadRemaining(p.ID, newRemaining, "replenishing"); err != nil {

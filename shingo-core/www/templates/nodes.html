@@ -285,7 +285,7 @@ function loadInventory(nodeID) {
   var list = document.getElementById('inv-list');
   list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   fetch('/api/nodes/inventory?id=' + nodeID)
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
         list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Empty</span>';
@@ -294,8 +294,8 @@ function loadInventory(nodeID) {
       }
       var html = '<table style="font-size:0.8rem"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Age</th></tr></thead><tbody>';
       items.forEach(function(item) {
-        var age = timeAgo(item.DeliveredAt);
-        html += '<tr style="cursor:pointer" onclick="expandPayloadManifest(' + item.ID + ')"><td>#' + item.ID + '</td><td>' + esc(item.PayloadTypeName) + '</td><td>' + esc(item.Status) + '</td><td>' + age + '</td></tr>';
+        var age = timeAgo(item.delivered_at);
+        html += '<tr style="cursor:pointer" onclick="expandPayloadManifest(' + item.id + ')"><td>#' + item.id + '</td><td>' + esc(item.payload_type_name) + '</td><td>' + esc(item.status) + '</td><td>' + age + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -314,7 +314,7 @@ function expandPayloadManifest(payloadID) {
   var list = document.getElementById('inv-manifest-list');
   list.innerHTML = '<span class="text-muted">Loading...</span>';
   fetch('/api/payloads/manifest?id=' + payloadID)
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
         list.innerHTML = '<span class="text-muted">No manifest items</span>';
@@ -324,8 +324,8 @@ function expandPayloadManifest(payloadID) {
       if (isAuth) html += '<th></th>';
       html += '</tr></thead><tbody>';
       items.forEach(function(item) {
-        html += '<tr><td>' + esc(item.PartNumber) + '</td><td>' + item.Quantity + '</td><td>' + esc(item.Notes) + '</td>';
-        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" style="font-size:0.7rem;padding:0.1rem 0.3rem" onclick="removeCorrectionItem(' + item.ID + ',\'' + esc(item.PartNumber) + '\')">X</button></td>';
+        html += '<tr><td>' + esc(item.part_number) + '</td><td>' + item.quantity + '</td><td>' + esc(item.notes) + '</td>';
+        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" style="font-size:0.7rem;padding:0.1rem 0.3rem" onclick="removeCorrectionItem(' + item.id + ',\'' + esc(item.part_number) + '\')">X</button></td>';
         html += '</tr>';
       });
       html += '</tbody></table>';
@@ -357,7 +357,7 @@ function addCorrectionItem() {
       reason: reason
     })
   })
-  .then(function(r) { return r.json(); })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
   .then(function(data) {
     if (data.error) { alert(data.error); return; }
     document.getElementById('nc-part').value = '';
@@ -365,7 +365,8 @@ function addCorrectionItem() {
     document.getElementById('nc-reason').value = '';
     expandPayloadManifest(expandedPayloadID);
     loadNodeCorrections(currentNodeID);
-  });
+  })
+  .catch(function(e) { alert('Error: ' + e); });
 }
 
 function removeCorrectionItem(manifestItemID, partNumber) {
@@ -384,12 +385,13 @@ function removeCorrectionItem(manifestItemID, partNumber) {
       reason: reason
     })
   })
-  .then(function(r) { return r.json(); })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
   .then(function(data) {
     if (data.error) { alert(data.error); return; }
     expandPayloadManifest(expandedPayloadID);
     loadNodeCorrections(currentNodeID);
-  });
+  })
+  .catch(function(e) { alert('Error: ' + e); });
 }
 
 function loadNodeCorrections(nodeID) {
@@ -399,7 +401,7 @@ function loadNodeCorrections(nodeID) {
   var list = document.getElementById('inv-corrections-list');
   list.innerHTML = '<span class="text-muted">Loading...</span>';
   fetch('/api/corrections?node_id=' + nodeID)
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
         list.innerHTML = '<span class="text-muted">No corrections for this node</span>';
@@ -407,7 +409,7 @@ function loadNodeCorrections(nodeID) {
       }
       var html = '<table><thead><tr><th>Type</th><th>Part</th><th>Qty</th><th>Reason</th><th>Actor</th><th>Date</th></tr></thead><tbody>';
       items.forEach(function(c) {
-        html += '<tr><td>' + esc(c.CorrectionType) + '</td><td>' + esc(c.CatID) + '</td><td>' + c.Quantity + '</td><td>' + esc(c.Reason) + '</td><td>' + esc(c.Actor) + '</td><td>' + timeAgo(c.CreatedAt) + '</td></tr>';
+        html += '<tr><td>' + esc(c.correction_type) + '</td><td>' + esc(c.cat_id) + '</td><td>' + c.quantity + '</td><td>' + esc(c.reason) + '</td><td>' + esc(c.actor) + '</td><td>' + timeAgo(c.created_at) + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -483,7 +485,7 @@ function checkOccupancy() {
   document.getElementById('occupancy-modal').classList.add('active');
   document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">Loading...</span>';
   fetch('/api/nodes/occupancy')
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
         document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">No locations found</span>';

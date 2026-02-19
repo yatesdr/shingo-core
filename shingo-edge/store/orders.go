@@ -74,6 +74,12 @@ func (db *DB) ListActiveOrders() ([]Order, error) {
 	return scanOrders(rows)
 }
 
+func (db *DB) CountActiveOrders() int {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count)
+	return count
+}
+
 func (db *DB) ListActiveOrdersByLine(lineID int64) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
 		WHERE o.status NOT IN ('confirmed', 'cancelled')
@@ -153,6 +159,11 @@ func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
 
 func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
 	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now','localtime') WHERE id=?`, waybillID, eta, id)
+	return err
+}
+
+func (db *DB) UpdateOrderETA(id int64, eta string) error {
+	_, err := db.Exec(`UPDATE orders SET eta=?, updated_at=datetime('now','localtime') WHERE id=?`, eta, id)
 	return err
 }
 

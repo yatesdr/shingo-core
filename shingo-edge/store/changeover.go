@@ -55,6 +55,20 @@ func (db *DB) ListCurrentChangeoverLog(lineID int64) ([]ChangeoverLog, error) {
 	return scanChangeoverLogs(rows)
 }
 
+// GetLatestChangeoverState returns the most recent changeover log entry for a line.
+// Returns nil if no log entries exist.
+func (db *DB) GetLatestChangeoverState(lineID int64) (*ChangeoverLog, error) {
+	row := db.QueryRow(`SELECT id, from_job_style, to_job_style, state, detail, operator, COALESCE(line_id, 0), created_at
+		FROM changeover_log WHERE line_id = ? ORDER BY id DESC LIMIT 1`, lineID)
+	var l ChangeoverLog
+	var createdAt string
+	if err := row.Scan(&l.ID, &l.FromJobStyle, &l.ToJobStyle, &l.State, &l.Detail, &l.Operator, &l.LineID, &createdAt); err != nil {
+		return nil, err
+	}
+	l.CreatedAt = scanTime(createdAt)
+	return &l, nil
+}
+
 func scanChangeoverLogs(rows interface{ Next() bool; Scan(...interface{}) error; Err() error }) ([]ChangeoverLog, error) {
 	var logs []ChangeoverLog
 	for rows.Next() {
