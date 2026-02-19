@@ -28,9 +28,27 @@ import (
 var Version = "dev"
 
 func main() {
+	// Strip --log-debug / -log-debug from os.Args before flag.Parse,
+	// because flag.String always requires a value argument but we want
+	// bare --log-debug (no value) to mean "all subsystems".
+	var fileFilter []string // nil = no file output
+	var filteredArgs []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--log-debug" || arg == "-log-debug" {
+			fileFilter = []string{} // empty = all subsystems
+			continue
+		}
+		if strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug=") {
+			val := arg[strings.Index(arg, "=")+1:]
+			fileFilter = strings.Split(val, ",")
+			continue
+		}
+		filteredArgs = append(filteredArgs, arg)
+	}
+	os.Args = append(os.Args[:1], filteredArgs...)
+
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "shingocore.yaml", "path to config file")
-	flag.String("log-debug", "", "enable debug log (optional: subsystem filter)")
 	showHelp := flag.Bool("help", false, "show help")
 	flag.Parse()
 
@@ -64,20 +82,6 @@ func main() {
 	if *showVersion {
 		fmt.Println("shingocore", Version)
 		return
-	}
-
-	// Detect bare --log-debug vs --log-debug=rds,kafka vs not present
-	var fileFilter []string // nil = no file output
-	for _, arg := range os.Args[1:] {
-		if arg == "--log-debug" || arg == "-log-debug" {
-			fileFilter = []string{} // empty = all subsystems
-			break
-		}
-		if strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug=") {
-			val := arg[strings.Index(arg, "=")+1:]
-			fileFilter = strings.Split(val, ",")
-			break
-		}
 	}
 
 	dbg, err := debuglog.New(1000, fileFilter)
