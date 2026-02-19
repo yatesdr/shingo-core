@@ -1,0 +1,178 @@
+package www
+
+import (
+	"encoding/json"
+	"html/template"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
+	db := h.engine.DB()
+
+	lines, _ := db.ListProductionLines()
+
+	// Determine active line
+	var activeLineID int64
+	if lineParam := r.URL.Query().Get("line"); lineParam != "" {
+		if id, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
+			activeLineID = id
+		}
+	}
+	if activeLineID == 0 && len(lines) > 0 {
+		activeLineID = lines[0].ID
+	}
+
+	// Date param (default today)
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+
+	// Job styles for this line (for the style toggle)
+	jobStyles, _ := db.ListJobStylesByLine(activeLineID)
+
+	// Style filter: "all" (default) or a specific style ID
+	styleParam := r.URL.Query().Get("style")
+	var filterStyleID int64
+	var filterStyleName string
+	if styleParam != "" && styleParam != "all" {
+		if id, err := strconv.ParseInt(styleParam, 10, 64); err == nil {
+			for _, js := range jobStyles {
+				if js.ID == id {
+					filterStyleID = id
+					filterStyleName = js.Name
+					break
+				}
+			}
+		}
+	}
+
+	shifts, _ := db.ListShifts()
+
+	// Load hourly counts
+	var hourlyCounts map[int]int64
+	if activeLineID > 0 {
+		if filterStyleID > 0 {
+			// Single style: convert list to map
+			counts, _ := db.ListHourlyCounts(activeLineID, filterStyleID, dateStr)
+			hourlyCounts = make(map[int]int64)
+			for _, c := range counts {
+				hourlyCounts[c.Hour] = c.Delta
+			}
+		} else {
+			hourlyCounts, _ = db.HourlyCountTotals(activeLineID, dateStr)
+		}
+	}
+	if hourlyCounts == nil {
+		hourlyCounts = make(map[int]int64)
+	}
+
+	anomalies, rpMap := loadAnomalyData(h)
+
+	shiftsJSON, _ := json.Marshal(shifts)
+	if shiftsJSON == nil {
+		shiftsJSON = []byte("[]")
+	}
+
+	hourlyCountsJSON, _ := json.Marshal(hourlyCounts)
+	if hourlyCountsJSON == nil {
+		hourlyCountsJSON = []byte("{}")
+	}
+
+	// Build style list for JS toggle: [{id, name}, ...]
+	type styleEntry struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	styleList := make([]styleEntry, len(jobStyles))
+	for i, js := range jobStyles {
+		styleList[i] = styleEntry{ID: js.ID, Name: js.Name}
+	}
+	stylesJSON, _ := json.Marshal(styleList)
+	if stylesJSON == nil {
+		stylesJSON = []byte("[]")
+	}
+
+	data := map[string]interface{}{
+		"Page":              "production",
+		"Lines":             lines,
+		"ActiveLineID":      activeLineID,
+		"Date":              dateStr,
+		"Shifts":            shifts,
+		"ShiftsJSON":        template.JS(shiftsJSON),
+		"HourlyCountsJSON":  template.JS(hourlyCountsJSON),
+		"StylesJSON":        template.JS(stylesJSON),
+		"FilterStyleID":     filterStyleID,
+		"FilterStyleName":   filterStyleName,
+		"Anomalies":         anomalies,
+		"ReportingPointMap": rpMap,
+	}
+
+	h.renderTemplate(w, "production.html", data)
+}
+
+func (h *Handlers) apiListShifts(w http.ResponseWriter, r *http.Request) {
+	shifts, err := h.engine.DB().ListShifts()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(shifts)
+}
+
+func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
+	var shifts []struct {
+		ShiftNumber int    `json:"shift_number"`
+		Name        string `json:"name"`
+		StartTime   string `json:"start_time"`
+		EndTime     string `json:"end_time"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&shifts); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	db := h.engine.DB()
+	for _, s := range shifts {
+		if s.ShiftNumber < 1 || s.ShiftNumber > 3 {
+			continue
+		}
+		if s.StartTime == "" && s.EndTime == "" {
+			db.DeleteShift(s.ShiftNumber)
+			continue
+		}
+		if err := db.UpsertShift(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
+	dateStr := r.URL.Query().Get("date")
+	if dateStr == "" {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+	lineID, _ := strconv.ParseInt(r.URL.Query().Get("line_id"), 10, 64)
+
+	if lineID == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{}"))
+		return
+	}
+
+	counts, err := h.engine.DB().HourlyCountTotals(lineID, dateStr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(counts)
+}

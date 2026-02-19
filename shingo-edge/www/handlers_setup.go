@@ -1,6 +1,8 @@
 package www
 
 import (
+	"encoding/json"
+	"html/template"
 	"net/http"
 )
 
@@ -35,6 +37,12 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 
+	shifts, _ := db.ListShifts()
+	shiftsJSON, _ := json.Marshal(shifts)
+	if shiftsJSON == nil {
+		shiftsJSON = []byte("[]")
+	}
+
 	data := map[string]interface{}{
 		"Page":              "setup",
 		"PLCStatus":         plcStatus,
@@ -51,6 +59,7 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 		"ReportingPointMap": rpMap,
 		"WarLinkConnected":  mgr.IsWarLinkConnected(),
 		"StationIDDefault":  cfg.Namespace + "." + cfg.LineID,
+		"ShiftsJSON":        template.JS(shiftsJSON),
 	}
 
 	h.renderTemplate(w, "setup.html", data)

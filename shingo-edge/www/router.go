@@ -113,6 +113,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 	r.Get("/kanbans", h.handleKanbans)
 	r.Get("/changeover", h.handleChangeover)
 	r.Get("/manual-order", h.handleManualOrder)
+	r.Get("/production", h.handleProduction)
 
 	// Login/logout
 	r.Get("/login", h.handleLoginPage)
@@ -145,6 +146,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Put("/payloads/{id}/count", h.apiPayloadCount)
 		r.Put("/payloads/{id}/reorder-point", h.apiUpdateReorderPoint)
 		r.Put("/payloads/{id}/auto-reorder", h.apiToggleAutoReorder)
+		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 
 		// Admin API (setup mutations)
 		r.Group(func(r chi.Router) {
@@ -196,6 +198,10 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 			// Core nodes
 			r.Get("/core-nodes", h.apiGetCoreNodes)
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
+
+			// Shifts
+			r.Get("/shifts", h.apiListShifts)
+			r.Put("/shifts", h.apiSaveShifts)
 
 			// Config
 			r.Put("/config/messaging", h.apiUpdateMessaging)

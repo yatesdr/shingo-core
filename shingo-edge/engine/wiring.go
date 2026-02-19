@@ -12,6 +12,12 @@ func (e *Engine) wireEventHandlers() {
 		e.handleCounterDelta(delta)
 	}, EventCounterDelta)
 
+	// CounterDelta → hourly production tracking
+	e.Events.SubscribeTypes(func(evt Event) {
+		delta := evt.Payload.(CounterDeltaEvent)
+		e.hourlyTracker.HandleDelta(delta)
+	}, EventCounterDelta)
+
 	// PayloadReorder → create retrieve order
 	e.Events.SubscribeTypes(func(evt Event) {
 		reorder := evt.Payload.(PayloadReorderEvent)

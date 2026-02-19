@@ -419,6 +419,45 @@
     </div>
 </div>
 
+<!-- 2.5 Shifts -->
+<div class="setup-section" id="section-shifts">
+    <div class="section-header" onclick="toggleSection('section-shifts')">
+        <h2><span class="section-chevron">&#9662;</span> Shifts</h2>
+    </div>
+    <div class="card">
+        <div class="card-body" style="padding:0.75rem 1rem">
+            <table class="table" style="margin-bottom:0">
+                <thead>
+                    <tr><th style="width:80px">Shift</th><th>Name</th><th>Start Time</th><th>End Time</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Shift 1</td>
+                        <td><input type="text" class="form-input shift-name" data-shift="1" placeholder="e.g. Day" style="width:120px"></td>
+                        <td><input type="time" class="form-input shift-start" data-shift="1"></td>
+                        <td><input type="time" class="form-input shift-end" data-shift="1"></td>
+                    </tr>
+                    <tr>
+                        <td>Shift 2</td>
+                        <td><input type="text" class="form-input shift-name" data-shift="2" placeholder="e.g. Swing" style="width:120px"></td>
+                        <td><input type="time" class="form-input shift-start" data-shift="2"></td>
+                        <td><input type="time" class="form-input shift-end" data-shift="2"></td>
+                    </tr>
+                    <tr>
+                        <td>Shift 3</td>
+                        <td><input type="text" class="form-input shift-name" data-shift="3" placeholder="e.g. Night" style="width:120px"></td>
+                        <td><input type="time" class="form-input shift-start" data-shift="3"></td>
+                        <td><input type="time" class="form-input shift-end" data-shift="3"></td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="text-align:right;margin-top:0.75rem">
+                <button class="btn btn-primary" onclick="saveShifts()">Save Shifts</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 3. Admin Password -->
 <div class="setup-section" id="section-pw">
     <div class="section-header" onclick="toggleSection('section-pw')">
@@ -439,6 +478,34 @@
 </div>
 
 <script>
+// --- Shifts ---
+(function loadShifts() {
+    var shifts = {{.ShiftsJSON}};
+    for (var i = 0; i < shifts.length; i++) {
+        var s = shifts[i];
+        var nameEl = document.querySelector('.shift-name[data-shift="' + s.shift_number + '"]');
+        var startEl = document.querySelector('.shift-start[data-shift="' + s.shift_number + '"]');
+        var endEl = document.querySelector('.shift-end[data-shift="' + s.shift_number + '"]');
+        if (nameEl) nameEl.value = s.name;
+        if (startEl) startEl.value = s.start_time;
+        if (endEl) endEl.value = s.end_time;
+    }
+})();
+
+async function saveShifts() {
+    var shifts = [];
+    for (var n = 1; n <= 3; n++) {
+        var name = document.querySelector('.shift-name[data-shift="' + n + '"]').value.trim();
+        var start = document.querySelector('.shift-start[data-shift="' + n + '"]').value;
+        var end = document.querySelector('.shift-end[data-shift="' + n + '"]').value;
+        shifts.push({ shift_number: n, name: name, start_time: start, end_time: end });
+    }
+    try {
+        await ShingoEdge.api.put('/api/shifts', shifts);
+        ShingoEdge.toast('Shifts saved', 'success');
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
 // --- Section collapse ---
 function toggleSection(id) {
     var el = document.getElementById(id);

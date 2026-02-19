@@ -30,6 +30,8 @@ type Engine struct {
 	changeoverMgrs map[int64]*changeover.Machine
 	coEmit         *changeoverEmitter
 
+	hourlyTracker *HourlyTracker
+
 	coreNodes   map[string]bool
 	coreNodesMu sync.RWMutex
 	nodeSyncFn  func()
@@ -79,6 +81,7 @@ func (e *Engine) Start() {
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
+	e.hourlyTracker = NewHourlyTracker(e.db)
 
 	// Initialize changeover machines for all production lines
 	lines, err := e.db.ListProductionLines()

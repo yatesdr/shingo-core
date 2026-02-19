@@ -134,6 +134,25 @@ CREATE TABLE IF NOT EXISTS production_lines (
     active_job_style_id INTEGER REFERENCES job_styles(id) ON DELETE SET NULL,
     created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS shifts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL DEFAULT '',
+    shift_number INTEGER NOT NULL UNIQUE,
+    start_time   TEXT NOT NULL,
+    end_time     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hourly_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    line_id      INTEGER NOT NULL,
+    job_style_id INTEGER NOT NULL,
+    count_date   TEXT NOT NULL,
+    hour         INTEGER NOT NULL,
+    delta        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(line_id, job_style_id, count_date, hour)
+);
 `
 
 func (db *DB) migrate() error {
