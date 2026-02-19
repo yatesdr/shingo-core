@@ -11,9 +11,10 @@ type FilterFunc func(hdr *RawHeader) bool
 // MessageHandler defines callbacks for all protocol message types.
 // Embed NoOpHandler and override only the methods you need.
 type MessageHandler interface {
+	// Generic data channel
+	HandleData(env *Envelope, p *Data)
+
 	// Edge -> Core
-	HandleEdgeRegister(env *Envelope, p *EdgeRegister)
-	HandleEdgeHeartbeat(env *Envelope, p *EdgeHeartbeat)
 	HandleOrderRequest(env *Envelope, p *OrderRequest)
 	HandleOrderCancel(env *Envelope, p *OrderCancel)
 	HandleOrderReceipt(env *Envelope, p *OrderReceipt)
@@ -21,8 +22,6 @@ type MessageHandler interface {
 	HandleOrderStorageWaybill(env *Envelope, p *OrderStorageWaybill)
 
 	// Core -> Edge
-	HandleEdgeRegistered(env *Envelope, p *EdgeRegistered)
-	HandleEdgeHeartbeatAck(env *Envelope, p *EdgeHeartbeatAck)
 	HandleOrderAck(env *Envelope, p *OrderAck)
 	HandleOrderWaybill(env *Envelope, p *OrderWaybill)
 	HandleOrderUpdate(env *Envelope, p *OrderUpdate)
@@ -74,10 +73,8 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 
 	// Dispatch by type
 	switch env.Type {
-	case TypeEdgeRegister:
-		decodeAndCall(ing.handler.HandleEdgeRegister, &env)
-	case TypeEdgeHeartbeat:
-		decodeAndCall(ing.handler.HandleEdgeHeartbeat, &env)
+	case TypeData:
+		decodeAndCall(ing.handler.HandleData, &env)
 	case TypeOrderRequest:
 		decodeAndCall(ing.handler.HandleOrderRequest, &env)
 	case TypeOrderCancel:
@@ -88,10 +85,6 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleOrderRedirect, &env)
 	case TypeOrderStorageWaybill:
 		decodeAndCall(ing.handler.HandleOrderStorageWaybill, &env)
-	case TypeEdgeRegistered:
-		decodeAndCall(ing.handler.HandleEdgeRegistered, &env)
-	case TypeEdgeHeartbeatAck:
-		decodeAndCall(ing.handler.HandleEdgeHeartbeatAck, &env)
 	case TypeOrderAck:
 		decodeAndCall(ing.handler.HandleOrderAck, &env)
 	case TypeOrderWaybill:

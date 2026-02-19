@@ -112,8 +112,8 @@ func TestExpiryHeader(t *testing.T) {
 }
 
 func TestDefaultTTLFor(t *testing.T) {
-	if ttl := DefaultTTLFor(TypeEdgeHeartbeat); ttl != 90*time.Second {
-		t.Errorf("heartbeat TTL = %v, want 90s", ttl)
+	if ttl := DefaultTTLFor(TypeData); ttl != 5*time.Minute {
+		t.Errorf("data TTL = %v, want 5m", ttl)
 	}
 	if ttl := DefaultTTLFor(TypeOrderDelivered); ttl != 60*time.Minute {
 		t.Errorf("delivered TTL = %v, want 60m", ttl)
@@ -127,8 +127,8 @@ func TestIngestorDispatch(t *testing.T) {
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
 
-	// Build a valid envelope
-	env, _ := NewEnvelope(TypeEdgeRegister,
+	// Build a valid data envelope with edge.register subject
+	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Node: "test-node"},
 		Address{Role: RoleCore},
 		&EdgeRegister{NodeID: "test-node", Factory: "plant-a"},
@@ -137,11 +137,20 @@ func TestIngestorDispatch(t *testing.T) {
 
 	ingestor.HandleRaw(data)
 
-	if !handler.registerCalled {
-		t.Error("expected HandleEdgeRegister to be called")
+	if !handler.dataCalled {
+		t.Error("expected HandleData to be called")
 	}
-	if handler.registerPayload.NodeID != "test-node" {
-		t.Errorf("node_id = %q, want %q", handler.registerPayload.NodeID, "test-node")
+	if handler.dataPayload.Subject != SubjectEdgeRegister {
+		t.Errorf("subject = %q, want %q", handler.dataPayload.Subject, SubjectEdgeRegister)
+	}
+
+	// Verify two-level decode of the body
+	var reg EdgeRegister
+	if err := json.Unmarshal(handler.dataPayload.Body, &reg); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if reg.NodeID != "test-node" {
+		t.Errorf("node_id = %q, want %q", reg.NodeID, "test-node")
 	}
 }
 
@@ -150,7 +159,7 @@ func TestIngestorFilter(t *testing.T) {
 	// Filter that rejects everything
 	ingestor := NewIngestor(handler, func(_ *RawHeader) bool { return false })
 
-	env, _ := NewEnvelope(TypeEdgeRegister,
+	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Node: "test-node"},
 		Address{Role: RoleCore},
 		&EdgeRegister{NodeID: "test-node"},
@@ -159,7 +168,7 @@ func TestIngestorFilter(t *testing.T) {
 
 	ingestor.HandleRaw(data)
 
-	if handler.registerCalled {
+	if handler.dataCalled {
 		t.Error("expected handler to NOT be called when filter rejects")
 	}
 }
@@ -168,7 +177,7 @@ func TestIngestorDropsExpired(t *testing.T) {
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
 
-	env, _ := NewEnvelope(TypeEdgeRegister,
+	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Node: "test-node"},
 		Address{Role: RoleCore},
 		&EdgeRegister{NodeID: "test-node"},
@@ -179,7 +188,7 @@ func TestIngestorDropsExpired(t *testing.T) {
 
 	ingestor.HandleRaw(data)
 
-	if handler.registerCalled {
+	if handler.dataCalled {
 		t.Error("expected handler to NOT be called for expired message")
 	}
 }
@@ -204,7 +213,7 @@ func TestEdgeFilter(t *testing.T) {
 }
 
 func TestWireFormatKeys(t *testing.T) {
-	env, _ := NewEnvelope(TypeEdgeHeartbeat,
+	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Node: "n1", Factory: "f1"},
 		Address{Role: RoleCore},
 		&EdgeHeartbeat{NodeID: "n1", Uptime: 60},
@@ -232,14 +241,162 @@ func TestWireFormatKeys(t *testing.T) {
 	}
 }
 
+func TestDataEnvelopeRoundTrip(t *testing.T) {
+	src := Address{Role: RoleEdge, Node: "plant-a.line-1", Factory: "plant-a"}
+	dst := Address{Role: RoleCore}
+
+	env, err := NewDataEnvelope(SubjectEdgeRegister, src, dst, &EdgeRegister{
+		NodeID:  "plant-a.line-1",
+		Factory: "plant-a",
+		Version: "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("NewDataEnvelope: %v", err)
+	}
+
+	if env.Type != TypeData {
+		t.Errorf("type = %q, want %q", env.Type, TypeData)
+	}
+
+	// Encode and decode
+	raw, err := env.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	var decoded Envelope
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	// Level 1: decode Data
+	var d Data
+	if err := decoded.DecodePayload(&d); err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if d.Subject != SubjectEdgeRegister {
+		t.Errorf("subject = %q, want %q", d.Subject, SubjectEdgeRegister)
+	}
+
+	// Level 2: decode body
+	var reg EdgeRegister
+	if err := json.Unmarshal(d.Body, &reg); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if reg.NodeID != "plant-a.line-1" {
+		t.Errorf("node_id = %q, want %q", reg.NodeID, "plant-a.line-1")
+	}
+	if reg.Version != "1.0.0" {
+		t.Errorf("version = %q, want %q", reg.Version, "1.0.0")
+	}
+}
+
+func TestDataTTLForSubjects(t *testing.T) {
+	tests := []struct {
+		subject string
+		want    time.Duration
+	}{
+		{SubjectEdgeHeartbeat, 90 * time.Second},
+		{SubjectEdgeHeartbeatAck, 90 * time.Second},
+		{SubjectEdgeRegister, 5 * time.Minute},
+		{SubjectEdgeRegistered, 5 * time.Minute},
+		{"inventory.query", 5 * time.Minute}, // unknown subject falls back to TypeData default
+	}
+	for _, tt := range tests {
+		if got := DataTTLFor(tt.subject); got != tt.want {
+			t.Errorf("DataTTLFor(%q) = %v, want %v", tt.subject, got, tt.want)
+		}
+	}
+}
+
+func TestNewDataReply(t *testing.T) {
+	reply, err := NewDataReply(SubjectEdgeRegistered,
+		Address{Role: RoleCore, Node: "core"},
+		Address{Role: RoleEdge, Node: "plant-a.line-1"},
+		"orig-msg-id",
+		&EdgeRegistered{NodeID: "plant-a.line-1", Message: "registered"},
+	)
+	if err != nil {
+		t.Fatalf("NewDataReply: %v", err)
+	}
+	if reply.Type != TypeData {
+		t.Errorf("type = %q, want %q", reply.Type, TypeData)
+	}
+	if reply.CorID != "orig-msg-id" {
+		t.Errorf("cor = %q, want %q", reply.CorID, "orig-msg-id")
+	}
+
+	// Decode and verify subject
+	var d Data
+	if err := reply.DecodePayload(&d); err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if d.Subject != SubjectEdgeRegistered {
+		t.Errorf("subject = %q, want %q", d.Subject, SubjectEdgeRegistered)
+	}
+}
+
+func TestDataWireFormat(t *testing.T) {
+	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
+		Address{Role: RoleEdge, Node: "plant-a.line-1", Factory: "plant-a"},
+		Address{Role: RoleCore},
+		&EdgeHeartbeat{NodeID: "plant-a.line-1", Uptime: 3600, Orders: 2},
+	)
+	raw, _ := env.Encode()
+
+	// Parse the full wire JSON
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal wire: %v", err)
+	}
+
+	// Verify type is "data"
+	var typ string
+	json.Unmarshal(wire["type"], &typ)
+	if typ != "data" {
+		t.Errorf("wire type = %q, want %q", typ, "data")
+	}
+
+	// Verify payload has "subject" and "data" keys
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(wire["p"], &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if _, ok := payload["subject"]; !ok {
+		t.Error("expected 'subject' key in payload")
+	}
+	if _, ok := payload["data"]; !ok {
+		t.Error("expected 'data' key in payload")
+	}
+
+	// Verify subject value
+	var subject string
+	json.Unmarshal(payload["subject"], &subject)
+	if subject != SubjectEdgeHeartbeat {
+		t.Errorf("subject = %q, want %q", subject, SubjectEdgeHeartbeat)
+	}
+
+	// Verify inner data can be decoded
+	var hb EdgeHeartbeat
+	if err := json.Unmarshal(payload["data"], &hb); err != nil {
+		t.Fatalf("unmarshal heartbeat data: %v", err)
+	}
+	if hb.Uptime != 3600 {
+		t.Errorf("uptime = %d, want 3600", hb.Uptime)
+	}
+	if hb.Orders != 2 {
+		t.Errorf("orders = %d, want 2", hb.Orders)
+	}
+}
+
 // testHandler tracks which methods were called.
 type testHandler struct {
 	NoOpHandler
-	registerCalled  bool
-	registerPayload EdgeRegister
+	dataCalled  bool
+	dataPayload Data
 }
 
-func (h *testHandler) HandleEdgeRegister(env *Envelope, p *EdgeRegister) {
-	h.registerCalled = true
-	h.registerPayload = *p
+func (h *testHandler) HandleData(env *Envelope, p *Data) {
+	h.dataCalled = true
+	h.dataPayload = *p
 }

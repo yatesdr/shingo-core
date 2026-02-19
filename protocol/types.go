@@ -2,9 +2,10 @@ package protocol
 
 // Message type constants for the unified protocol.
 const (
+	// Generic data channel
+	TypeData = "data"
+
 	// Edge -> Core (published on orders topic)
-	TypeEdgeRegister       = "edge.register"
-	TypeEdgeHeartbeat      = "edge.heartbeat"
 	TypeOrderRequest       = "order.request"
 	TypeOrderCancel        = "order.cancel"
 	TypeOrderReceipt       = "order.receipt"
@@ -12,14 +13,20 @@ const (
 	TypeOrderStorageWaybill = "order.storage_waybill"
 
 	// Core -> Edge (published on dispatch topic)
-	TypeEdgeRegistered  = "edge.registered"
-	TypeEdgeHeartbeatAck = "edge.heartbeat_ack"
 	TypeOrderAck        = "order.ack"
 	TypeOrderWaybill    = "order.waybill"
 	TypeOrderUpdate     = "order.update"
 	TypeOrderDelivered  = "order.delivered"
 	TypeOrderError      = "order.error"
 	TypeOrderCancelled  = "order.cancelled"
+)
+
+// Data channel subject constants.
+const (
+	SubjectEdgeRegister    = "edge.register"
+	SubjectEdgeRegistered  = "edge.registered"
+	SubjectEdgeHeartbeat   = "edge.heartbeat"
+	SubjectEdgeHeartbeatAck = "edge.heartbeat_ack"
 )
 
 // Roles for Address.Role.

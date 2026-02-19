@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"encoding/json"
 	"log"
 
 	"shingoedge/orders"
@@ -20,12 +21,25 @@ func NewEdgeHandler(orderMgr *orders.Manager) *EdgeHandler {
 	return &EdgeHandler{orderMgr: orderMgr}
 }
 
-func (h *EdgeHandler) HandleEdgeRegistered(_ *protocol.Envelope, p *protocol.EdgeRegistered) {
-	log.Printf("edge_handler: registration acknowledged: node=%s msg=%s", p.NodeID, p.Message)
-}
-
-func (h *EdgeHandler) HandleEdgeHeartbeatAck(_ *protocol.Envelope, p *protocol.EdgeHeartbeatAck) {
-	log.Printf("edge_handler: heartbeat ack: node=%s server_ts=%d", p.NodeID, p.ServerTS)
+func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
+	switch p.Subject {
+	case protocol.SubjectEdgeRegistered:
+		var reg protocol.EdgeRegistered
+		if err := json.Unmarshal(p.Body, &reg); err != nil {
+			log.Printf("edge_handler: decode edge registered body: %v", err)
+			return
+		}
+		log.Printf("edge_handler: registration acknowledged: node=%s msg=%s", reg.NodeID, reg.Message)
+	case protocol.SubjectEdgeHeartbeatAck:
+		var ack protocol.EdgeHeartbeatAck
+		if err := json.Unmarshal(p.Body, &ack); err != nil {
+			log.Printf("edge_handler: decode heartbeat ack body: %v", err)
+			return
+		}
+		log.Printf("edge_handler: heartbeat ack: node=%s server_ts=%d", ack.NodeID, ack.ServerTS)
+	default:
+		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
+	}
 }
 
 func (h *EdgeHandler) HandleOrderAck(env *protocol.Envelope, p *protocol.OrderAck) {

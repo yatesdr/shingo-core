@@ -5,7 +5,7 @@
 
 ## Overview
 
-The Shingo wire protocol defines a JSON-based messaging format for communication between Shingo Core (central server / dispatch) and Shingo Edge (shop-floor client) nodes. Messages are transported over MQTT or Kafka. The protocol supports edge registration, heartbeat health monitoring, and the full order lifecycle for material transport in a manufacturing plant.
+The Shingo wire protocol defines a JSON-based messaging format for communication between Shingo Core (central server / dispatch) and Shingo Edge (shop-floor client) nodes. Messages are transported over MQTT or Kafka. The protocol supports the full order lifecycle for material transport, plus a generic data channel for edge lifecycle management (registration, heartbeat) and future data exchange (inventory queries, production stats, scheduling).
 
 This document specifies everything needed to implement a compatible producer or consumer in any language or system.
 
@@ -24,9 +24,9 @@ Both transports carry identical JSON payloads. The protocol is transport-agnosti
 
 The protocol uses **two topics** for strict separation of traffic direction:
 
-- **`shingo/orders`** -- Edge -> Core. Carries registration, heartbeats, and all order-related requests from edge nodes upstream to the core server. Core subscribes to this topic. Edges publish to it.
+- **`shingo/orders`** -- Edge -> Core. Carries order-related requests and data channel messages (registration, heartbeats) from edge nodes upstream to the core server. Core subscribes to this topic. Edges publish to it.
 
-- **`shingo/dispatch`** -- Core -> Edge. Carries registration acknowledgements, heartbeat acks, and all order replies from the core server downstream to edge nodes. Edges subscribe to this topic. Core publishes to it.
+- **`shingo/dispatch`** -- Core -> Edge. Carries order replies and data channel responses (registration acks, heartbeat acks) from the core server downstream to edge nodes. Edges subscribe to this topic. Core publishes to it.
 
 Edges never see each other's order traffic. Core never sees its own replies echoed back.
 
@@ -37,7 +37,7 @@ Edges never see each other's order traffic. Core never sees its own replies echo
 | QoS | 1 (at-least-once) |
 | Retained | No |
 | CleanSession | `false` for edges (broker queues messages during disconnect) |
-| Reconnect | Re-send `edge.register` on every MQTT reconnect |
+| Reconnect | Re-send `edge.register` (via data channel) on every MQTT reconnect |
 
 ### Kafka Configuration
 
@@ -130,6 +130,8 @@ If any check fails, discard the message. No payload bytes are deserialized.
 
 If Phase 1 passes, deserialize the complete envelope including the `p` field into the appropriate payload struct based on `type`.
 
+For `data` type messages, this involves a **two-level decode**: first into the `Data` wrapper (to extract the `subject`), then the inner `data` field into the subject-specific struct. See [Data Channel](#data-channel).
+
 ### Filtering
 
 **Core (subscribed to `shingo/orders`):**
@@ -151,19 +153,16 @@ Since edges only subscribe to `shingo/dispatch`, all messages are already `dst.r
 
 ### Type String Format
 
-Type strings use dotted notation: `{category}.{action}`. Two categories exist:
+Type strings use dotted notation: `{category}.{action}`. Two categories exist for typed messages:
 
-- `edge.*` -- Registration and health monitoring
 - `order.*` -- Transport order lifecycle
+- `data` -- Generic data channel (subject-based dispatch)
 
 ### Complete Type Registry
 
 | Type String | Topic | Direction | Payload Type | Description |
 |---|---|---|---|---|
-| `edge.register` | `shingo/orders` | Edge -> Core | [EdgeRegister](#edgeregister) | Edge announces itself on startup or reconnect |
-| `edge.registered` | `shingo/dispatch` | Core -> Edge | [EdgeRegistered](#edgeregistered) | Core acknowledges registration |
-| `edge.heartbeat` | `shingo/orders` | Edge -> Core | [EdgeHeartbeat](#edgeheartbeat) | Periodic health ping (every 60 seconds) |
-| `edge.heartbeat_ack` | `shingo/dispatch` | Core -> Edge | [EdgeHeartbeatAck](#edgeheartbeatack) | Core acknowledges heartbeat (includes server timestamp for clock sync) |
+| `data` | Both | Both | [Data](#data-channel) | Generic data exchange (registration, heartbeat, queries, etc.). Subject-based dispatch. |
 | `order.request` | `shingo/orders` | Edge -> Core | [OrderRequest](#orderrequest) | New transport order submission |
 | `order.cancel` | `shingo/orders` | Edge -> Core | [OrderCancel](#ordercancel) | Request to cancel an existing order |
 | `order.receipt` | `shingo/orders` | Edge -> Core | [OrderReceipt](#orderreceipt) | Delivery confirmation from operator |
@@ -175,6 +174,71 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist:
 | `order.delivered` | `shingo/dispatch` | Core -> Edge | [OrderDelivered](#orderdelivered) | Fleet reports delivery complete |
 | `order.error` | `shingo/dispatch` | Core -> Edge | [OrderError](#ordererror) | Order processing failed |
 | `order.cancelled` | `shingo/dispatch` | Core -> Edge | [OrderCancelled](#ordercancelled) | Order cancellation confirmed |
+
+---
+
+## Data Channel
+
+The `data` message type provides a generic, extensible channel for non-order communication. Instead of adding new top-level message types for every feature, data messages use **subject-based dispatch**: the `subject` field inside the payload selects the schema, and the `data` field carries the subject-specific body.
+
+### Data Payload Structure
+
+```json
+{
+  "v": 1,
+  "type": "data",
+  "id": "...",
+  "src": {"role": "edge", "node": "plant-a.line-1", "factory": "plant-a"},
+  "dst": {"role": "core", "node": "", "factory": ""},
+  "ts": "2026-02-18T10:01:00Z",
+  "exp": "2026-02-18T10:02:30Z",
+  "p": {
+    "subject": "edge.heartbeat",
+    "data": {"node_id": "plant-a.line-1", "uptime_s": 3600, "active_orders": 2}
+  }
+}
+```
+
+| Field | JSON Key | Type | Description |
+|---|---|---|---|
+| Subject | `subject` | string | Identifies the data schema. Dotted notation (e.g., `"edge.heartbeat"`). See [Known Subjects](#known-subjects). |
+| Data | `data` | object | Subject-specific payload. Schema determined by `subject`. Treated as raw JSON (`json.RawMessage`) until the handler switches on subject. |
+
+### Two-Level Decode
+
+Handlers process data messages in two steps:
+
+1. **Level 1:** Decode the envelope payload into `Data` (extracts `subject` and raw `data` bytes).
+2. **Level 2:** Switch on `subject` and decode the `data` field into the appropriate subject-specific struct.
+
+This design means unhandled subjects never touch the inner body bytes -- only the `subject` string is inspected.
+
+### Request/Reply
+
+Data messages use the envelope's existing `cor` (correlation ID) field for request/reply patterns. No additional fields are needed. A reply sets `cor` to the original message's `id`.
+
+### Known Subjects
+
+| Subject | Direction | Data Schema | Description |
+|---|---|---|---|
+| `edge.register` | Edge -> Core | [EdgeRegister](#edgeregister) | Edge announces itself on startup or reconnect |
+| `edge.registered` | Core -> Edge | [EdgeRegistered](#edgeregistered) | Core acknowledges registration |
+| `edge.heartbeat` | Edge -> Core | [EdgeHeartbeat](#edgeheartbeat) | Periodic health ping (every 60 seconds) |
+| `edge.heartbeat_ack` | Core -> Edge | [EdgeHeartbeatAck](#edgeheartbeatack) | Core acknowledges heartbeat |
+
+New subjects (e.g., `inventory.query`, `production.stats`) can be added by defining a constant and a data schema -- no protocol interface changes required.
+
+### Subject-Specific TTLs
+
+Data messages have a default TTL of 5 minutes, but individual subjects can override this:
+
+| Subject | TTL | Rationale |
+|---|---|---|
+| `edge.heartbeat` | 90 seconds | Stale after 1.5 heartbeat intervals |
+| `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
+| `edge.register` | 5 minutes | Should complete quickly after connect |
+| `edge.registered` | 5 minutes | Should complete quickly after connect |
+| Unknown subjects | 5 minutes | Safe general default |
 
 ---
 
@@ -193,8 +257,9 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 
 | Category | Message Types | TTL | Rationale |
 |---|---|---|---|
-| Heartbeat | `edge.heartbeat`, `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
-| Registration | `edge.register`, `edge.registered` | 5 minutes | Should complete quickly after connect |
+| Data channel | `data` (default) | 5 minutes | Safe general default for data exchange |
+| Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
+| Data: registration | `data` with subject `edge.register` / `edge.registered` | 5 minutes | Should complete quickly after connect |
 | Order commands | `order.request`, `order.cancel`, `order.redirect`, `order.storage_waybill` | 10 minutes | Operator can resubmit if expired |
 | Order status | `order.ack`, `order.update` | 10 minutes | Status updates age fast |
 | Important replies | `order.receipt`, `order.waybill`, `order.error`, `order.cancelled` | 30 minutes | Important, longer window needed |
@@ -211,11 +276,13 @@ Relative TTLs (durations) are ambiguous when messages sit in a Kafka partition o
 
 All payloads are JSON objects nested inside the `p` field of the envelope. Fields marked "omitempty" may be absent from the JSON when their value is the zero value for that type (empty string, 0, false).
 
-### Edge -> Core Payloads
+### Data Channel Schemas
+
+These schemas are used as the `data` field inside `data`-type messages. See [Data Channel](#data-channel).
 
 #### EdgeRegister
 
-Sent by an edge node on startup and on every MQTT reconnect. Triggers an upsert in core's edge registry.
+Sent by an edge node on startup and on every MQTT reconnect via `data` message with subject `edge.register`. Triggers an upsert in core's edge registry.
 
 ```json
 {
@@ -237,7 +304,7 @@ Sent by an edge node on startup and on every MQTT reconnect. Triggers an upsert 
 
 #### EdgeHeartbeat
 
-Sent every 60 seconds by each edge node.
+Sent every 60 seconds by each edge node via `data` message with subject `edge.heartbeat`.
 
 ```json
 {
@@ -252,6 +319,40 @@ Sent every 60 seconds by each edge node.
 | Node ID | `node_id` | string | Yes | Edge identifier (must match registration). |
 | Uptime | `uptime_s` | integer | No | Seconds since edge process started. |
 | Active Orders | `active_orders` | integer | No | Number of currently active (non-terminal) orders. |
+
+#### EdgeRegistered
+
+Acknowledges a successful edge registration via `data` message with subject `edge.registered`. The `cor` (correlation ID) field in the envelope links back to the original registration message.
+
+```json
+{
+  "node_id": "plant-a.line-1",
+  "message": "registered"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Node ID | `node_id` | string | Yes | The registered edge node ID (echo back). |
+| Message | `message` | string | No | Human-readable status message. |
+
+#### EdgeHeartbeatAck
+
+Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. Provides server timestamp for optional clock drift detection.
+
+```json
+{
+  "node_id":   "plant-a.line-1",
+  "server_ts": 1739876400
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Node ID | `node_id` | string | Yes | The heartbeating edge node ID (echo back). |
+| Server Timestamp | `server_ts` | integer | Yes | Core's current time as Unix epoch seconds. Edges can compare with their own clock to detect drift. |
+
+### Order Payloads: Edge -> Core
 
 #### OrderRequest
 
@@ -364,39 +465,7 @@ Submits a store order with pickup details and count.
 | Pickup Node | `pickup_node` | string | Yes | Where to pick up the payload for storage. |
 | Final Count | `final_count` | float | Yes | Item count at time of storage submission. |
 
-### Core -> Edge Payloads
-
-#### EdgeRegistered
-
-Acknowledges a successful edge registration. The `cor` (correlation ID) field in the envelope links back to the original `edge.register` message.
-
-```json
-{
-  "node_id": "plant-a.line-1",
-  "message": "registered"
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Node ID | `node_id` | string | Yes | The registered edge node ID (echo back). |
-| Message | `message` | string | No | Human-readable status message. |
-
-#### EdgeHeartbeatAck
-
-Acknowledges a heartbeat. Provides server timestamp for optional clock drift detection.
-
-```json
-{
-  "node_id":   "plant-a.line-1",
-  "server_ts": 1739876400
-}
-```
-
-| Field | JSON Key | Type | Required | Description |
-|---|---|---|---|---|
-| Node ID | `node_id` | string | Yes | The heartbeating edge node ID (echo back). |
-| Server Timestamp | `server_ts` | integer | Yes | Core's current time as Unix epoch seconds. Edges can compare with their own clock to detect drift. |
+### Order Payloads: Core -> Edge
 
 #### OrderAck
 
@@ -592,25 +661,27 @@ Edge                          Broker                         Core
 
 ## Edge Registration and Heartbeat
 
+Edge registration and heartbeat messages are sent via the [Data Channel](#data-channel).
+
 ### Registration Flow
 
 1. Edge starts (or reconnects to MQTT).
-2. Edge publishes `edge.register` on `shingo/orders`.
+2. Edge publishes `data` message with subject `edge.register` on `shingo/orders`.
 3. Core upserts the edge in `edge_registry` table, sets status to `"active"`.
-4. Core publishes `edge.registered` on `shingo/dispatch` (with `cor` linking to the register message).
+4. Core publishes `data` message with subject `edge.registered` on `shingo/dispatch` (with `cor` linking to the original message).
 5. Edge receives acknowledgement.
 
 ### Heartbeat Flow
 
-1. Edge publishes `edge.heartbeat` every **60 seconds** on `shingo/orders`.
+1. Edge publishes `data` message with subject `edge.heartbeat` every **60 seconds** on `shingo/orders`.
 2. Core updates `last_heartbeat` timestamp in `edge_registry`.
-3. Core publishes `edge.heartbeat_ack` on `shingo/dispatch` (with server timestamp for clock sync).
+3. Core publishes `data` message with subject `edge.heartbeat_ack` on `shingo/dispatch` (with server timestamp for clock sync).
 
 ### Stale Edge Detection
 
 Core runs a background check every **60 seconds**:
 - If an edge's `last_heartbeat` is older than **180 seconds** (3 missed heartbeats), its status is set to `"stale"`.
-- A new `edge.register` or `edge.heartbeat` resets status to `"active"`.
+- A new registration or heartbeat resets status to `"active"`.
 
 ### Edge Registry Schema
 
@@ -677,8 +748,14 @@ on_message(raw_bytes):
 
     # Dispatch
     switch envelope.type:
-        case "edge.register":    handle_register(envelope, payload)
+        case "data":
+            data = payload               # {subject, data}
+            switch data.subject:
+                case "edge.register":    handle_register(envelope, data.data)
+                case "edge.heartbeat":   handle_heartbeat(envelope, data.data)
+                ...
         case "order.request":    handle_order_request(envelope, payload)
+        case "order.ack":        handle_order_ack(envelope, payload)
         ...
 ```
 
@@ -697,6 +774,7 @@ passes_filter(dst) = (dst.node == MY_NODE_ID) or (dst.node == "*")
 ### Implementing a Producer
 
 ```
+# For order messages:
 envelope = {
     "v":    1,
     "type": message_type,
@@ -706,6 +784,18 @@ envelope = {
     "ts":   now_utc_iso8601(),
     "exp":  now_utc_iso8601() + ttl_for(message_type),
     "p":    payload_object
+}
+
+# For data channel messages:
+envelope = {
+    "v":    1,
+    "type": "data",
+    "id":   generate_uuid_v4(),
+    "src":  {"role": my_role, "node": my_node_id, "factory": my_factory},
+    "dst":  {"role": target_role, "node": target_node, "factory": target_factory},
+    "ts":   now_utc_iso8601(),
+    "exp":  now_utc_iso8601() + data_ttl_for(subject),
+    "p":    {"subject": subject, "data": body_object}
 }
 
 # Add correlation ID for reply messages
@@ -723,7 +813,7 @@ publish(topic, json_serialize(envelope))
 
 An analytics system can subscribe to one or both topics to build a complete picture:
 
-- **`shingo/orders`** -- See all edge activity: order submissions, cancellations, receipts, redirects, and edge health (registration/heartbeat). Good for measuring order throughput, edge uptime, and operator behavior.
+- **`shingo/orders`** -- See all edge activity: order submissions, cancellations, receipts, redirects, and edge health (data channel: registration/heartbeat). Good for measuring order throughput, edge uptime, and operator behavior.
 
 - **`shingo/dispatch`** -- See all core decisions: acknowledgements, robot assignments, delivery notifications, errors. Good for measuring fulfillment latency, error rates, and fleet utilization.
 
@@ -738,15 +828,15 @@ An analytics system can subscribe to one or both topics to build a complete pict
 | Acknowledgement time | Time between `order.request` `ts` and `order.ack` `ts` (use `cor` or match `order_uuid`) |
 | Error rate | Count `order.error` / count `order.request` per time window |
 | Error breakdown | Group `order.error` by `error_code` |
-| Edge uptime | Track `edge.heartbeat` gaps per `node_id`; any gap > 180s = downtime period |
-| Active edges | Count distinct `node_id` from `edge.heartbeat` in last 180s |
+| Edge uptime | Track `data` messages with subject `edge.heartbeat` gaps per `node_id`; any gap > 180s = downtime period |
+| Active edges | Count distinct `node_id` from `data` messages with subject `edge.heartbeat` in last 180s |
 | Orders per edge | Group `order.request` by `src.node` |
 | Orders per factory | Group `order.request` by `src.factory` |
 | Material demand | Group `order.request` by `payload_type_code` and `delivery_node` |
 | Robot utilization | Track `waybill_id` and `robot_id` from `order.waybill` messages |
 | Redirect frequency | Count `order.redirect` / count `order.request` |
 | Receipt confirmation time | Time between `order.delivered` `ts` and `order.receipt` `ts` for same `order_uuid` |
-| Clock drift | Compare `server_ts` in `edge.heartbeat_ack` with edge's local clock |
+| Clock drift | Compare `server_ts` in `data` with subject `edge.heartbeat_ack` with edge's local clock |
 
 ### Correlation
 
@@ -761,7 +851,7 @@ The envelope `cor` (correlation ID) links a reply to the specific request that t
                                     |
 shingo/orders ---+--> filter(type="order.request") --+--> demand_by_material (group by payload_type_code)
                  |                                    |
-                 +--> filter(type="edge.heartbeat") --+--> edge_uptime (gap detection)
+                 +--> filter(type="data", subject="edge.heartbeat") --+--> edge_uptime (gap detection)
                  |
                  +--> filter(type="order.receipt") ---+--> join with delivered --> receipt_latency
 
@@ -778,33 +868,36 @@ shingo/dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
 
 ## Wire Format Examples
 
-### Edge Registration (edge -> core)
+### Edge Registration (edge -> core, via data channel)
 
 ```json
 {
   "v": 1,
-  "type": "edge.register",
+  "type": "data",
   "id": "f2b0ffe2-420b-42ee-849c-cb7434233cbb",
   "src": {"role": "edge", "node": "plant-a.line-1", "factory": "plant-a"},
   "dst": {"role": "core", "node": "", "factory": ""},
   "ts": "2026-02-18T10:00:00Z",
   "exp": "2026-02-18T10:05:00Z",
   "p": {
-    "node_id": "plant-a.line-1",
-    "factory": "plant-a",
-    "hostname": "edge-01.local",
-    "version": "1.2.0",
-    "line_ids": ["line-1"]
+    "subject": "edge.register",
+    "data": {
+      "node_id": "plant-a.line-1",
+      "factory": "plant-a",
+      "hostname": "edge-01.local",
+      "version": "1.2.0",
+      "line_ids": ["line-1"]
+    }
   }
 }
 ```
 
-### Registration Acknowledgement (core -> edge)
+### Registration Acknowledgement (core -> edge, via data channel)
 
 ```json
 {
   "v": 1,
-  "type": "edge.registered",
+  "type": "data",
   "id": "a9c3d8f1-1234-5678-abcd-ef0123456789",
   "src": {"role": "core", "node": "core", "factory": "plant-a"},
   "dst": {"role": "edge", "node": "plant-a.line-1", "factory": "plant-a"},
@@ -812,27 +905,33 @@ shingo/dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "exp": "2026-02-18T10:05:01Z",
   "cor": "f2b0ffe2-420b-42ee-849c-cb7434233cbb",
   "p": {
-    "node_id": "plant-a.line-1",
-    "message": "registered"
+    "subject": "edge.registered",
+    "data": {
+      "node_id": "plant-a.line-1",
+      "message": "registered"
+    }
   }
 }
 ```
 
-### Heartbeat (edge -> core)
+### Heartbeat (edge -> core, via data channel)
 
 ```json
 {
   "v": 1,
-  "type": "edge.heartbeat",
+  "type": "data",
   "id": "b7d4e5f6-7890-1234-abcd-567890abcdef",
   "src": {"role": "edge", "node": "plant-a.line-1", "factory": "plant-a"},
   "dst": {"role": "core", "node": "", "factory": ""},
   "ts": "2026-02-18T10:01:00Z",
   "exp": "2026-02-18T10:02:30Z",
   "p": {
-    "node_id": "plant-a.line-1",
-    "uptime_s": 60,
-    "active_orders": 1
+    "subject": "edge.heartbeat",
+    "data": {
+      "node_id": "plant-a.line-1",
+      "uptime_s": 60,
+      "active_orders": 1
+    }
   }
 }
 ```
@@ -911,6 +1010,7 @@ The `v` field in the envelope is an integer protocol version. The current versio
 - Consumers must reject envelopes with `v` values they do not recognize.
 - New optional payload fields may be added in a minor update without incrementing `v`.
 - New message types (new `type` strings) may be added without incrementing `v`. Consumers should log and ignore unknown types.
+- New data channel subjects may be added without incrementing `v`. Handlers should log and ignore unknown subjects.
 - Changes to existing field semantics, field removals, or envelope structure changes require incrementing `v`.
 
 ---
@@ -945,6 +1045,20 @@ The `v` field in the envelope is an integer protocol version. The current versio
         "factory": {"type": "string"}
       }
     }
+  }
+}
+```
+
+### Data Payload Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["subject", "data"],
+  "properties": {
+    "subject": {"type": "string", "minLength": 1},
+    "data":    {"type": "object"}
   }
 }
 ```

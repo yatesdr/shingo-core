@@ -1,6 +1,15 @@
 package protocol
 
-// --- Edge -> Core payloads ---
+import "encoding/json"
+
+// Data is the payload for TypeData messages.
+// Subject selects the sub-schema; Body carries the subject-specific data.
+type Data struct {
+	Subject string          `json:"subject"`
+	Body    json.RawMessage `json:"data"`
+}
+
+// --- Edge lifecycle data schemas ---
 
 // EdgeRegister is sent by an edge on startup.
 type EdgeRegister struct {
@@ -17,6 +26,20 @@ type EdgeHeartbeat struct {
 	Uptime  int64  `json:"uptime_s"`
 	Orders  int    `json:"active_orders"`
 }
+
+// EdgeRegistered acknowledges edge registration.
+type EdgeRegistered struct {
+	NodeID  string `json:"node_id"`
+	Message string `json:"message,omitempty"`
+}
+
+// EdgeHeartbeatAck acknowledges a heartbeat.
+type EdgeHeartbeatAck struct {
+	NodeID   string `json:"node_id"`
+	ServerTS int64  `json:"server_ts"`
+}
+
+// --- Order payloads: Edge -> Core ---
 
 // OrderRequest is a new transport order from edge.
 type OrderRequest struct {
@@ -61,19 +84,7 @@ type OrderStorageWaybill struct {
 	FinalCount  float64 `json:"final_count"`
 }
 
-// --- Core -> Edge payloads ---
-
-// EdgeRegistered acknowledges edge registration.
-type EdgeRegistered struct {
-	NodeID  string `json:"node_id"`
-	Message string `json:"message,omitempty"`
-}
-
-// EdgeHeartbeatAck acknowledges a heartbeat.
-type EdgeHeartbeatAck struct {
-	NodeID   string `json:"node_id"`
-	ServerTS int64  `json:"server_ts"`
-}
+// --- Order payloads: Core -> Edge ---
 
 // OrderAck confirms order acceptance.
 type OrderAck struct {

@@ -68,6 +68,43 @@ func NewReply(msgType string, src, dst Address, correlationID string, payload an
 	return env, nil
 }
 
+// NewDataEnvelope creates a data-channel envelope with subject-specific TTL.
+func NewDataEnvelope(subject string, src, dst Address, body any) (*Envelope, error) {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	p, err := json.Marshal(&Data{Subject: subject, Body: bodyBytes})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	exp := now.Add(DataTTLFor(subject))
+
+	return &Envelope{
+		Version:   Version,
+		Type:      TypeData,
+		ID:        uuid.New().String(),
+		Src:       src,
+		Dst:       dst,
+		Timestamp: now,
+		ExpiresAt: exp,
+		Payload:   p,
+	}, nil
+}
+
+// NewDataReply creates a data-channel reply envelope with correlation ID.
+func NewDataReply(subject string, src, dst Address, correlationID string, body any) (*Envelope, error) {
+	env, err := NewDataEnvelope(subject, src, dst, body)
+	if err != nil {
+		return nil, err
+	}
+	env.CorID = correlationID
+	return env, nil
+}
+
 // Encode marshals the envelope to JSON.
 func (e *Envelope) Encode() ([]byte, error) {
 	return json.Marshal(e)

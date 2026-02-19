@@ -52,8 +52,8 @@ func (h *Heartbeater) Stop() {
 
 func (h *Heartbeater) sendRegister() {
 	hostname, _ := os.Hostname()
-	env, err := protocol.NewEnvelope(
-		protocol.TypeEdgeRegister,
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectEdgeRegister,
 		protocol.Address{Role: protocol.RoleEdge, Node: h.nodeID, Factory: h.factory},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.EdgeRegister{
@@ -77,8 +77,8 @@ func (h *Heartbeater) sendRegister() {
 
 func (h *Heartbeater) sendHeartbeat() {
 	uptime := int64(time.Since(h.startTime).Seconds())
-	env, err := protocol.NewEnvelope(
-		protocol.TypeEdgeHeartbeat,
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectEdgeHeartbeat,
 		protocol.Address{Role: protocol.RoleEdge, Node: h.nodeID, Factory: h.factory},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.EdgeHeartbeat{

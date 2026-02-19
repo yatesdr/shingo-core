@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -48,7 +49,28 @@ func (h *CoreHandler) Stop() {
 	h.stopOnce.Do(func() { close(h.stopCh) })
 }
 
-func (h *CoreHandler) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
+func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
+	switch p.Subject {
+	case protocol.SubjectEdgeRegister:
+		var reg protocol.EdgeRegister
+		if err := json.Unmarshal(p.Body, &reg); err != nil {
+			log.Printf("core_handler: decode edge register body: %v", err)
+			return
+		}
+		h.handleEdgeRegister(env, &reg)
+	case protocol.SubjectEdgeHeartbeat:
+		var hb protocol.EdgeHeartbeat
+		if err := json.Unmarshal(p.Body, &hb); err != nil {
+			log.Printf("core_handler: decode edge heartbeat body: %v", err)
+			return
+		}
+		h.handleEdgeHeartbeat(env, &hb)
+	default:
+		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
+	}
+}
+
+func (h *CoreHandler) handleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
 	log.Printf("core_handler: edge registered: %s (factory=%s, hostname=%s, version=%s, lines=%v)",
 		p.NodeID, p.Factory, p.Hostname, p.Version, p.LineIDs)
 
@@ -57,9 +79,8 @@ func (h *CoreHandler) HandleEdgeRegister(env *protocol.Envelope, p *protocol.Edg
 		return
 	}
 
-	// Send registration acknowledgement
-	reply, err := protocol.NewReply(
-		protocol.TypeEdgeRegistered,
+	reply, err := protocol.NewDataReply(
+		protocol.SubjectEdgeRegistered,
 		protocol.Address{Role: protocol.RoleCore, Node: h.nodeID, Factory: h.factoryID},
 		protocol.Address{Role: protocol.RoleEdge, Node: p.NodeID, Factory: p.Factory},
 		env.ID,
@@ -75,15 +96,14 @@ func (h *CoreHandler) HandleEdgeRegister(env *protocol.Envelope, p *protocol.Edg
 	}
 }
 
-func (h *CoreHandler) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
+func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
 	if err := h.db.UpdateHeartbeat(p.NodeID); err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.NodeID, err)
 		return
 	}
 
-	// Send heartbeat ack
-	reply, err := protocol.NewReply(
-		protocol.TypeEdgeHeartbeatAck,
+	reply, err := protocol.NewDataReply(
+		protocol.SubjectEdgeHeartbeatAck,
 		protocol.Address{Role: protocol.RoleCore, Node: h.nodeID, Factory: h.factoryID},
 		protocol.Address{Role: protocol.RoleEdge, Node: p.NodeID, Factory: env.Src.Factory},
 		env.ID,

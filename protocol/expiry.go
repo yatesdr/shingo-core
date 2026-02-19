@@ -2,13 +2,9 @@ package protocol
 
 import "time"
 
-// Default TTLs by message category.
+// Default TTLs by message type.
 var defaultTTLs = map[string]time.Duration{
-	TypeEdgeHeartbeat:    90 * time.Second,
-	TypeEdgeHeartbeatAck: 90 * time.Second,
-
-	TypeEdgeRegister:   5 * time.Minute,
-	TypeEdgeRegistered: 5 * time.Minute,
+	TypeData: 5 * time.Minute,
 
 	TypeOrderRequest:        10 * time.Minute,
 	TypeOrderCancel:         10 * time.Minute,
@@ -26,8 +22,24 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderDelivered: 60 * time.Minute,
 }
 
+// Subject-specific TTLs for data channel messages.
+var subjectTTLs = map[string]time.Duration{
+	SubjectEdgeHeartbeat:    90 * time.Second,
+	SubjectEdgeHeartbeatAck: 90 * time.Second,
+	SubjectEdgeRegister:     5 * time.Minute,
+	SubjectEdgeRegistered:   5 * time.Minute,
+}
+
 // FallbackTTL is used when no specific TTL is configured.
 const FallbackTTL = 10 * time.Minute
+
+// DataTTLFor returns the TTL for a data channel subject.
+func DataTTLFor(subject string) time.Duration {
+	if ttl, ok := subjectTTLs[subject]; ok {
+		return ttl
+	}
+	return defaultTTLs[TypeData]
+}
 
 // DefaultTTLFor returns the default TTL for a message type.
 func DefaultTTLFor(msgType string) time.Duration {
