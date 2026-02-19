@@ -3,8 +3,10 @@
 *.dll
 *.so
 *.dylib
+# Built binaries (but not cmd/shingocore/ or cmd/shingoedge/ dirs)
 shingocore
 shingoedge
+!cmd/
 build/
 
 # Database files
