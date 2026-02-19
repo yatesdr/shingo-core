@@ -38,6 +38,10 @@ func (c *Client) GetOrderDetails(id string) (*OrderDetail, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
+	if resp.Data == nil {
+		c.dbg("!! orderDetails/%s returned code=0 but data=null", id)
+		return nil, fmt.Errorf("order %s: empty response data", id)
+	}
 	return resp.Data, nil
 }
 
@@ -81,6 +85,10 @@ func (c *Client) GetOrderByExternalID(externalID string) (*OrderDetail, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
+	if resp.Data == nil {
+		c.dbg("!! orderDetailsByExternalId/%s returned code=0 but data=null", externalID)
+		return nil, fmt.Errorf("order by externalId %s: empty response data", externalID)
+	}
 	return resp.Data, nil
 }
 
@@ -92,6 +100,10 @@ func (c *Client) GetOrderByBlockID(blockID string) (*OrderDetail, error) {
 	}
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
+	}
+	if resp.Data == nil {
+		c.dbg("!! orderDetailsByBlockId/%s returned code=0 but data=null", blockID)
+		return nil, fmt.Errorf("order by blockId %s: empty response data", blockID)
 	}
 	return resp.Data, nil
 }
@@ -125,6 +137,10 @@ func (c *Client) GetBlockDetails(blockID string) (*BlockDetail, error) {
 	}
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
+	}
+	if resp.Data == nil {
+		c.dbg("!! blockDetailsById/%s returned code=0 but data=null", blockID)
+		return nil, fmt.Errorf("block %s: empty response data", blockID)
 	}
 	return resp.Data, nil
 }

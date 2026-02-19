@@ -29,16 +29,26 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msgOK := h.engine.MsgClient().IsConnected()
+	redisOK := h.engine.NodeState().Ping() == nil
+
+	trackerCount := 0
+	if t := h.engine.Tracker(); t != nil {
+		trackerCount = t.ActiveCount()
+	}
 
 	data := map[string]any{
-		"Page":         "dashboard",
-		"ActiveOrders": activeOrders,
-		"StatusCounts": statusCounts,
-		"TotalOrders":  len(activeOrders),
-		"TotalNodes":   len(nodes),
-		"EnabledNodes": enabledNodes,
-		"FleetOK":      fleetOK,
-		"MessagingOK":  msgOK,
+		"Page":          "dashboard",
+		"ActiveOrders":  activeOrders,
+		"StatusCounts":  statusCounts,
+		"TotalOrders":   len(activeOrders),
+		"TotalNodes":    len(nodes),
+		"EnabledNodes":  enabledNodes,
+		"FleetOK":       fleetOK,
+		"FleetName":     h.engine.Fleet().Name(),
+		"MessagingOK":   msgOK,
+		"RedisOK":       redisOK,
+		"PollerActive":  trackerCount,
+		"SSEClients":    h.eventHub.ClientCount(),
 		"Authenticated": h.isAuthenticated(r),
 	}
 	h.render(w, "dashboard.html", data)

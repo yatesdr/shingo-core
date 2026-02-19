@@ -21,6 +21,7 @@ type Client struct {
 	cfg      *config.MessagingConfig
 	kafka    *kafkaState
 	handlers map[string]MessageHandler
+	DebugLog func(string, ...any)
 }
 
 type kafkaState struct {
@@ -32,6 +33,12 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 	return &Client{
 		cfg:      cfg,
 		handlers: make(map[string]MessageHandler),
+	}
+}
+
+func (c *Client) dbg(format string, args ...any) {
+	if fn := c.DebugLog; fn != nil {
+		fn(format, args...)
 	}
 }
 
@@ -47,13 +54,16 @@ func (c *Client) Connect() error {
 	var conn *kafka.Conn
 	var connErr error
 	for _, broker := range c.cfg.Kafka.Brokers {
+		c.dbg("connect: probing broker %s", broker)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, connErr = kafka.DialContext(ctx, "tcp", broker)
 		cancel()
 		if connErr == nil {
 			log.Printf("messaging: kafka connected to %s", broker)
+			c.dbg("connect: broker %s ok", broker)
 			break
 		}
+		c.dbg("connect: broker %s failed: %v", broker, connErr)
 	}
 	if connErr != nil {
 		return fmt.Errorf("kafka connect: %w", connErr)
@@ -80,6 +90,7 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	if c.kafka == nil || c.kafka.writer == nil {
 		return fmt.Errorf("kafka not connected")
 	}
+	c.dbg("publish: topic=%s size=%d", topic, len(payload))
 	return c.kafka.writer.WriteMessages(context.Background(), kafka.Message{
 		Topic: topic,
 		Value: payload,
@@ -140,12 +151,15 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 		GroupID: c.cfg.Kafka.GroupID,
 	})
 	c.kafka.readers[topic] = reader
+	c.dbg("subscribe: topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
 	go func() {
 		for {
 			msg, err := reader.ReadMessage(context.Background())
 			if err != nil {
+				c.dbg("subscribe exit: topic=%s error=%v", topic, err)
 				return
 			}
+			c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
 			handler(msg.Topic, msg.Value)
 		}
 	}()
@@ -158,6 +172,7 @@ func (c *Client) PublishEnvelope(topic string, env interface{ Encode() ([]byte, 
 	if err != nil {
 		return fmt.Errorf("encode envelope: %w", err)
 	}
+	c.dbg("publish envelope: topic=%s size=%d", topic, len(data))
 	return c.Publish(topic, data)
 }
 

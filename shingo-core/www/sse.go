@@ -174,6 +174,14 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		h.Broadcast("system-status", `{"messaging":"disconnected"}`)
 	}, engine.EventMessagingDisconnected)
+
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		h.Broadcast("system-status", `{"redis":"connected"}`)
+	}, engine.EventRedisConnected)
+
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		h.Broadcast("system-status", `{"redis":"disconnected"}`)
+	}, engine.EventRedisDisconnected)
 }
 
 // SSEHandler serves the SSE endpoint.

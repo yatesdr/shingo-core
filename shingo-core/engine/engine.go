@@ -23,6 +23,7 @@ type Config struct {
 	MsgClient  *messaging.Client
 	LogFunc    LogFunc
 	Debug      bool
+	DebugLog   func(string, ...any)
 }
 
 type Engine struct {
@@ -36,9 +37,11 @@ type Engine struct {
 	tracker        fleet.OrderTracker
 	Events         *EventBus
 	logFn          LogFunc
+	debugLog       func(string, ...any)
 	stopChan       chan struct{}
 	fleetConnected bool
 	msgConnected   bool
+	redisConnected bool
 }
 
 func New(c Config) *Engine {
@@ -55,7 +58,14 @@ func New(c Config) *Engine {
 		msgClient:  c.MsgClient,
 		Events:     NewEventBus(),
 		logFn:      logFn,
+		debugLog:   c.DebugLog,
 		stopChan:   make(chan struct{}),
+	}
+}
+
+func (e *Engine) dbg(format string, args ...any) {
+	if fn := e.debugLog; fn != nil {
+		fn(format, args...)
 	}
 }
 
@@ -144,6 +154,19 @@ func (e *Engine) checkConnectionStatus() {
 		if e.msgConnected {
 			e.msgConnected = false
 			e.Events.Emit(Event{Type: EventMessagingDisconnected, Payload: ConnectionEvent{Detail: "messaging disconnected"}})
+		}
+	}
+
+	// Redis
+	if err := e.nodeState.Ping(); err == nil {
+		if !e.redisConnected {
+			e.redisConnected = true
+			e.Events.Emit(Event{Type: EventRedisConnected, Payload: ConnectionEvent{Detail: "redis connected"}})
+		}
+	} else {
+		if e.redisConnected {
+			e.redisConnected = false
+			e.Events.Emit(Event{Type: EventRedisDisconnected, Payload: ConnectionEvent{Detail: err.Error()}})
 		}
 	}
 }

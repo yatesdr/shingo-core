@@ -13,6 +13,7 @@ type Config struct {
 	BaseURL      string
 	Timeout      time.Duration
 	PollInterval time.Duration
+	DebugLog     func(string, ...any)
 }
 
 // Adapter wraps an rds.Client to implement fleet.TrackingBackend,
@@ -21,13 +22,17 @@ type Adapter struct {
 	client       *rds.Client
 	pollInterval time.Duration
 	poller       *rds.Poller
+	debugLog     func(string, ...any)
 }
 
 // New creates a new Seer RDS adapter.
 func New(cfg Config) *Adapter {
+	client := rds.NewClient(cfg.BaseURL, cfg.Timeout)
+	client.DebugLog = cfg.DebugLog
 	return &Adapter{
-		client:       rds.NewClient(cfg.BaseURL, cfg.Timeout),
+		client:       client,
 		pollInterval: cfg.PollInterval,
+		debugLog:     cfg.DebugLog,
 	}
 }
 
@@ -89,6 +94,7 @@ func (a *Adapter) InitTracker(emitter fleet.TrackerEmitter, resolver fleet.Order
 	bridge := &emitterBridge{emitter: emitter}
 	resolverBridge := &resolverBridge{resolver: resolver}
 	a.poller = rds.NewPoller(a.client, bridge, resolverBridge, a.pollInterval)
+	a.poller.DebugLog = a.debugLog
 }
 
 func (a *Adapter) Tracker() fleet.OrderTracker {

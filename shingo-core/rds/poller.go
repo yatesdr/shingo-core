@@ -1,7 +1,9 @@
 package rds
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +24,7 @@ type Poller struct {
 	emitter  PollerEmitter
 	resolver OrderIDResolver
 	interval time.Duration
+	DebugLog func(string, ...any)
 
 	mu       sync.Mutex
 	active   map[string]OrderState // rdsOrderID -> last known state
@@ -36,6 +39,12 @@ func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, 
 		interval: interval,
 		active:   make(map[string]OrderState),
 		stopChan: make(chan struct{}),
+	}
+}
+
+func (p *Poller) dbg(format string, args ...any) {
+	if fn := p.DebugLog; fn != nil {
+		fn(format, args...)
 	}
 }
 
@@ -95,10 +104,19 @@ func (p *Poller) poll() {
 	}
 	p.mu.Unlock()
 
+	if len(ids) > 0 {
+		if len(ids) <= 10 {
+			p.dbg("poll: %d active orders [%s]", len(ids), strings.Join(ids, ", "))
+		} else {
+			p.dbg("poll: %d active orders", len(ids))
+		}
+	}
+
 	for _, rdsID := range ids {
 		detail, err := p.client.GetOrderDetails(rdsID)
 		if err != nil {
 			log.Printf("poller: get order %s: %v", rdsID, err)
+			p.dbg("poll error: GetOrderDetails(%s): %v", rdsID, err)
 			continue
 		}
 
@@ -114,6 +132,8 @@ func (p *Poller) poll() {
 			continue
 		}
 
+		p.dbg("transition %s: %s -> %s (robot=%s)", rdsID, oldState, newState, detail.Vehicle)
+
 		// State transition detected
 		p.mu.Lock()
 		if newState.IsTerminal() {
@@ -126,9 +146,10 @@ func (p *Poller) poll() {
 		orderID, err := p.resolver.ResolveRDSOrderID(rdsID)
 		if err != nil {
 			log.Printf("poller: resolve %s: %v", rdsID, err)
+			p.dbg("poll error: resolve(%s): %v", rdsID, err)
 			continue
 		}
 
-		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, "")
+		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, fmt.Sprintf("fleet state: %s -> %s", oldState, newState))
 	}
 }

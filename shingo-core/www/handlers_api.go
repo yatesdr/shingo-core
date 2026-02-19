@@ -101,10 +101,12 @@ func (h *Handlers) apiHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := h.engine.Fleet().Ping(); err == nil {
 		fleetOK = true
 	}
+	redisOK := h.engine.NodeState().Ping() == nil
 	h.jsonOK(w, map[string]any{
 		"status":    "ok",
 		"fleet":     fleetOK,
 		"messaging": h.engine.MsgClient().IsConnected(),
+		"redis":     redisOK,
 	})
 }
 

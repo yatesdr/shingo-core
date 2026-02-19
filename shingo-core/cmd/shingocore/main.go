@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/config"
+	"shingocore/debuglog"
 	"shingocore/engine"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
@@ -28,11 +30,68 @@ var Version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "shingocore.yaml", "path to config file")
+	flag.String("log-debug", "", "enable debug log (optional: subsystem filter)")
+	showHelp := flag.Bool("help", false, "show help")
 	flag.Parse()
+
+	if *showHelp {
+		fmt.Println("Usage: shingocore [options]")
+		fmt.Println()
+		fmt.Println("Options:")
+		fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
+		fmt.Println("  --version             show version")
+		fmt.Println("  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
+		fmt.Println("                        FILTER: comma-separated subsystems (default: all)")
+		fmt.Println("  --help                show this help")
+		fmt.Println()
+		fmt.Println("Debug subsystems:")
+		fmt.Println("  rds           Fleet manager (Seer RDS) HTTP requests/responses")
+		fmt.Println("  kafka         Kafka connect, publish, subscribe, receive")
+		fmt.Println("  dispatch      Order lifecycle: request routing, fleet dispatch")
+		fmt.Println("  protocol      Protocol envelope decode/encode")
+		fmt.Println("  outbox        Outbox drain cycles and delivery")
+		fmt.Println("  core_handler  Inbound message handler dispatch")
+		fmt.Println("  nodestate     Redis cache operations, node state sync")
+		fmt.Println("  engine        Engine wiring, vendor status changes")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  shingocore --log-debug              # all subsystems to file")
+		fmt.Println("  shingocore --log-debug=rds           # only RDS to file")
+		fmt.Println("  shingocore --log-debug=rds,dispatch  # RDS + dispatch to file")
+		os.Exit(0)
+	}
 
 	if *showVersion {
 		fmt.Println("shingocore", Version)
 		return
+	}
+
+	// Detect bare --log-debug vs --log-debug=rds,kafka vs not present
+	var fileFilter []string // nil = no file output
+	for _, arg := range os.Args[1:] {
+		if arg == "--log-debug" || arg == "-log-debug" {
+			fileFilter = []string{} // empty = all subsystems
+			break
+		}
+		if strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug=") {
+			val := arg[strings.Index(arg, "=")+1:]
+			fileFilter = strings.Split(val, ",")
+			break
+		}
+	}
+
+	dbg, err := debuglog.New(1000, fileFilter)
+	if err != nil {
+		log.Fatalf("debug log: %v", err)
+	}
+	defer dbg.Close()
+
+	if dbg.FileEnabled() {
+		if fileFilter != nil && len(fileFilter) > 0 {
+			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, subsystems: %s)", strings.Join(fileFilter, ","))
+		} else {
+			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, all subsystems)")
+		}
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -66,6 +125,7 @@ func main() {
 	// Node state manager
 	redisStore := nodestate.NewRedisStore(redisClient)
 	nodeStateMgr := nodestate.NewManager(db, redisStore)
+	nodeStateMgr.DebugLog = dbg.Func("nodestate")
 	if err := nodeStateMgr.SyncRedisFromSQL(); err != nil {
 		log.Printf("shingocore: redis sync from SQL: %v", err)
 	}
@@ -75,6 +135,7 @@ func main() {
 		BaseURL:      cfg.RDS.BaseURL,
 		Timeout:      cfg.RDS.Timeout,
 		PollInterval: cfg.RDS.PollInterval,
+		DebugLog:     dbg.Func("rds"),
 	})
 	if err := fleetAdapter.Ping(); err == nil {
 		log.Printf("shingocore: fleet backend connected (%s)", fleetAdapter.Name())
@@ -84,6 +145,7 @@ func main() {
 
 	// Messaging client
 	msgClient := messaging.NewClient(&cfg.Messaging)
+	msgClient.DebugLog = dbg.Func("kafka")
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("shingocore: messaging connect failed (%v)", err)
 	} else {
@@ -99,15 +161,21 @@ func main() {
 		Fleet:      fleetAdapter,
 		NodeState:  nodeStateMgr,
 		MsgClient:  msgClient,
+		DebugLog:   dbg.Func("engine"),
 	})
 	eng.Start()
 	defer eng.Stop()
 
+	// Inject debug log into dispatcher
+	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
+
 	// Protocol ingestor (inbound from ShinGo Edge)
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
+	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.Start()
 	defer coreHandler.Stop()
 	ingestor := protocol.NewIngestor(coreHandler, func(_ *protocol.RawHeader) bool { return true })
+	ingestor.DebugLog = dbg.Func("protocol")
 	if err := msgClient.Subscribe(cfg.Messaging.OrdersTopic, func(_ string, data []byte) {
 		ingestor.HandleRaw(data)
 	}); err != nil {
@@ -118,11 +186,12 @@ func main() {
 
 	// Outbox drainer (outbound to ShinGo Edge)
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
+	drainer.DebugLog = dbg.Func("outbox")
 	drainer.Start()
 	defer drainer.Stop()
 
 	// Web server
-	handler, stopWeb := www.NewRouter(eng)
+	handler, stopWeb := www.NewRouter(eng, dbg)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := &http.Server{

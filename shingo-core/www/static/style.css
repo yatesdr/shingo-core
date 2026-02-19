@@ -33,7 +33,9 @@ nav a:hover, nav a.active { color: var(--primary); text-decoration: none; }
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 768px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+.grid-6 { grid-template-columns: repeat(6, 1fr); }
+@media (max-width: 1024px) { .grid-6 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 768px) { .grid-2, .grid-3, .grid-4, .grid-6 { grid-template-columns: 1fr; } }
 
 /* Stats */
 .stat { text-align: center; }
@@ -338,3 +340,22 @@ textarea { resize: vertical; min-height: 60px; }
 .flex { display: flex; }
 .flex-between { justify-content: space-between; align-items: center; }
 .gap-1 { gap: 0.5rem; }
+
+/* Debug log viewer */
+.debug-log-wrap {
+  max-height: 600px;
+  overflow-y: auto;
+}
+.debug-log-table {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.8rem;
+}
+.debug-log-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.debug-row.debug-error { background: #fff5f5; color: #842029; }
+.debug-row.debug-warn { background: #fffbeb; color: #856404; }
+.debug-row.debug-debug { color: var(--text-muted); }

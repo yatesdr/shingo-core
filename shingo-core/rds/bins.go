@@ -42,6 +42,10 @@ func (c *Client) GetScene() (*Scene, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
+	if resp.Scene == nil {
+		c.dbg("!! /scene returned code=0 but scene=null")
+		return nil, fmt.Errorf("scene: empty response data")
+	}
 	return resp.Scene, nil
 }
 

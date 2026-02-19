@@ -3,18 +3,33 @@ package nodestate
 import (
 	"context"
 	"log"
+	"time"
 
 	"shingocore/store"
 )
 
 // Manager provides write-through node state management: SQL first, then Redis.
 type Manager struct {
-	db    *store.DB
-	redis *RedisStore
+	db       *store.DB
+	redis    *RedisStore
+	DebugLog func(string, ...any)
+}
+
+func (m *Manager) dbg(format string, args ...any) {
+	if fn := m.DebugLog; fn != nil {
+		fn(format, args...)
+	}
 }
 
 func NewManager(db *store.DB, redis *RedisStore) *Manager {
 	return &Manager{db: db, redis: redis}
+}
+
+// Ping checks Redis connectivity with a 2-second timeout.
+func (m *Manager) Ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return m.redis.Ping(ctx)
 }
 
 // AddPayload creates a payload in SQL and refreshes Redis for its node.
@@ -53,7 +68,9 @@ func (m *Manager) MovePayload(payloadID, toNodeID int64) error {
 	if err := m.db.MovePayload(payloadID, toNodeID); err != nil {
 		return err
 	}
-	m.db.UnclaimPayload(payloadID)
+	if err := m.db.UnclaimPayload(payloadID); err != nil {
+		m.dbg("MovePayload: unclaim payload %d error (silently dropped): %v", payloadID, err)
+	}
 	if fromNodeID != nil {
 		m.refreshNodeRedis(*fromNodeID)
 	}
@@ -67,6 +84,7 @@ func (m *Manager) GetNodeState(nodeID int64) (*NodeState, error) {
 
 	meta, err := m.redis.GetNodeMeta(ctx, nodeID)
 	if err == nil && meta != nil {
+		m.dbg("GetNodeState(%d): redis hit", nodeID)
 		items, _ := m.redis.GetNodePayloads(ctx, nodeID)
 		count, _ := m.redis.GetCount(ctx, nodeID)
 		return &NodeState{
@@ -81,6 +99,7 @@ func (m *Manager) GetNodeState(nodeID int64) (*NodeState, error) {
 		}, nil
 	}
 
+	m.dbg("GetNodeState(%d): redis miss, falling back to SQL", nodeID)
 	// Fall back to SQL
 	return m.getNodeStateFromSQL(nodeID)
 }
@@ -127,6 +146,7 @@ func (m *Manager) SyncRedisFromSQL() error {
 	}
 
 	for _, node := range nodes {
+		m.dbg("SyncRedisFromSQL: node %d (%s)", node.ID, node.Name)
 		meta := &NodeMeta{
 			NodeID:   node.ID,
 			NodeName: node.Name,
@@ -171,6 +191,8 @@ func (m *Manager) refreshNodeRedis(nodeID int64) {
 		log.Printf("nodestate: refresh redis for node %d: %v", nodeID, err)
 		return
 	}
+
+	m.dbg("refreshNodeRedis: node %d payloads=%d", nodeID, len(dbPayloads))
 
 	items := make([]PayloadItem, len(dbPayloads))
 	for i, p := range dbPayloads {

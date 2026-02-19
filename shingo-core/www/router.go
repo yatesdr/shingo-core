@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/sessions"
 
+	"shingocore/debuglog"
 	"shingocore/engine"
 )
 
@@ -18,12 +19,17 @@ type Handlers struct {
 	sessions *sessions.CookieStore
 	tmpls    map[string]*template.Template
 	eventHub *EventHub
+	debugLog *debuglog.Logger
 }
 
-func NewRouter(eng *engine.Engine) (http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) {
 	hub := NewEventHub()
 	hub.Start()
 	hub.SetupEngineListeners(eng)
+
+	dbg.SetOnEntry(func(e debuglog.Entry) {
+		hub.Broadcast("debug-log", sseJSON(e))
+	})
 
 	sessionStore := newSessionStore(eng.AppConfig().Web.SessionSecret)
 
@@ -59,6 +65,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		sessions: sessionStore,
 		tmpls:    tmpls,
 		eventHub: hub,
+		debugLog: dbg,
 	}
 
 	h.ensureDefaultAdmin(eng.DB())

@@ -30,6 +30,7 @@ func (e *Engine) wireEventHandlers() {
 	// When the fleet reports a status change, update our order and notify ShinGo Edge
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderStatusChangedEvent)
+		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
 		e.handleVendorStatusChange(ev)
 	}, EventOrderStatusChanged)
 
@@ -108,7 +109,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			if err != nil {
 				log.Printf("engine: encode waybill reply: %v", err)
 			} else {
-				e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.waybill", order.StationID)
+				if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.waybill", order.StationID); err != nil {
+					e.dbg("EnqueueOutbox waybill error (silently dropped): %v", err)
+				}
 			}
 		}
 	}
@@ -134,7 +137,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		if err != nil {
 			log.Printf("engine: encode update reply: %v", err)
 		} else {
-			e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.update", order.StationID)
+			if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.update", order.StationID); err != nil {
+				e.dbg("EnqueueOutbox update error (silently dropped): %v", err)
+			}
 		}
 	}
 
@@ -177,7 +182,9 @@ func (e *Engine) handleOrderDelivered(order *store.Order) {
 		log.Printf("engine: encode delivered reply: %v", err)
 		return
 	}
-	e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.delivered", order.StationID)
+	if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.delivered", order.StationID); err != nil {
+		e.dbg("EnqueueOutbox delivered error (silently dropped): %v", err)
+	}
 }
 
 // handleOrderCompleted moves payloads from source to dest after ShinGo Edge confirms physical receipt.

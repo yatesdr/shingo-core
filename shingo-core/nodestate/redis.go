@@ -111,6 +111,10 @@ func (r *RedisStore) RemoveNode(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+func (r *RedisStore) Ping(ctx context.Context) error {
+	return r.client.Ping(ctx).Err()
+}
+
 func (r *RedisStore) FlushAll(ctx context.Context) error {
 	ids, err := r.GetAllNodeIDs(ctx)
 	if err != nil {

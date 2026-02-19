@@ -22,6 +22,7 @@ type CoreHandler struct {
 	stationID  string
 	dispatchTopic string
 	dispatcher *dispatch.Dispatcher
+	DebugLog   func(string, ...any)
 
 	// Background goroutine for stale edge detection
 	stopOnce sync.Once
@@ -40,6 +41,12 @@ func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic strin
 	}
 }
 
+func (h *CoreHandler) dbg(format string, args ...any) {
+	if fn := h.DebugLog; fn != nil {
+		fn(format, args...)
+	}
+}
+
 // Start begins the stale-edge detection goroutine.
 func (h *CoreHandler) Start() {
 	go h.staleEdgeLoop()
@@ -51,6 +58,7 @@ func (h *CoreHandler) Stop() {
 }
 
 func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
+	h.dbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
 	switch p.Subject {
 	case protocol.SubjectEdgeRegister:
 		var reg protocol.EdgeRegister
@@ -103,6 +111,9 @@ func (h *CoreHandler) handleEdgeRegister(env *protocol.Envelope, p *protocol.Edg
 
 	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
 		log.Printf("core_handler: publish registered reply: %v", err)
+		h.dbg("reply publish failed: subject=edge.registered error=%v", err)
+	} else {
+		h.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 	}
 }
 
@@ -161,26 +172,31 @@ func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
 
 func (h *CoreHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	log.Printf("core_handler: order request from %s: uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
+	h.dbg("-> order_request from=%s uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
 	h.dispatcher.HandleOrderRequest(env, p)
 }
 
 func (h *CoreHandler) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	log.Printf("core_handler: order cancel from %s: uuid=%s", env.Src.Station, p.OrderUUID)
+	h.dbg("-> order_cancel from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderCancel(env, p)
 }
 
 func (h *CoreHandler) HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt) {
 	log.Printf("core_handler: delivery receipt from %s: uuid=%s", env.Src.Station, p.OrderUUID)
+	h.dbg("-> order_receipt from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderReceipt(env, p)
 }
 
 func (h *CoreHandler) HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect) {
 	log.Printf("core_handler: redirect from %s: uuid=%s -> %s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
+	h.dbg("-> order_redirect from=%s uuid=%s new_dest=%s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
 	h.dispatcher.HandleOrderRedirect(env, p)
 }
 
 func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
 	log.Printf("core_handler: storage waybill from %s: uuid=%s", env.Src.Station, p.OrderUUID)
+	h.dbg("-> storage_waybill from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderStorageWaybill(env, p)
 }
 
@@ -230,6 +246,9 @@ func (h *CoreHandler) staleEdgeLoop() {
 			if err != nil {
 				log.Printf("core_handler: mark stale edges: %v", err)
 				continue
+			}
+			if len(staleIDs) > 0 {
+				h.dbg("stale edge check: %d stale", len(staleIDs))
 			}
 			for _, sid := range staleIDs {
 				log.Printf("core_handler: edge %s marked stale, sending notification", sid)

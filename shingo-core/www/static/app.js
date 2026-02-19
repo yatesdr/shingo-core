@@ -38,6 +38,19 @@
           el.className = 'health ' + (data.messaging === 'connected' ? 'health-ok' : 'health-fail');
         }
       }
+      if (data.redis !== undefined) {
+        const el = document.getElementById('redis-status');
+        if (el) {
+          el.className = 'health ' + (data.redis === 'connected' ? 'health-ok' : 'health-fail');
+        }
+      }
+    });
+
+    es.addEventListener('debug-log', function(e) {
+      if (typeof window.debugAppendRow === 'function') {
+        var entry = JSON.parse(e.data);
+        window.debugAppendRow(entry);
+      }
     });
 
     es.onerror = function() {

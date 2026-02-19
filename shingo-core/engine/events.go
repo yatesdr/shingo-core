@@ -14,6 +14,8 @@ const (
 	EventFleetDisconnected
 	EventMessagingConnected
 	EventMessagingDisconnected
+	EventRedisConnected
+	EventRedisDisconnected
 )
 
 // --- Event payloads ---

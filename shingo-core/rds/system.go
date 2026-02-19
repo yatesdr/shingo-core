@@ -1,6 +1,9 @@
 package rds
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Ping checks RDS Core connectivity and returns product/version info.
 func (c *Client) Ping() (*PingResponse, error) {
@@ -28,6 +31,10 @@ func (c *Client) GetLicenseInfo() (*LicenseInfo, error) {
 	}
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
+	}
+	if resp.Data == nil {
+		c.dbg("!! /licInfo returned code=0 but data=null")
+		return nil, fmt.Errorf("license info: empty response data")
 	}
 	return resp.Data, nil
 }

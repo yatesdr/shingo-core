@@ -17,6 +17,7 @@ type Dispatcher struct {
 	emitter       Emitter
 	stationID     string
 	dispatchTopic string
+	DebugLog      func(string, ...any)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string) *Dispatcher {
@@ -29,6 +30,12 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	}
 }
 
+func (d *Dispatcher) dbg(format string, args ...any) {
+	if fn := d.DebugLog; fn != nil {
+		fn(format, args...)
+	}
+}
+
 func (d *Dispatcher) coreAddress() protocol.Address {
 	return protocol.Address{Role: protocol.RoleCore, Station: d.stationID}
 }
@@ -36,6 +43,8 @@ func (d *Dispatcher) coreAddress() protocol.Address {
 // HandleOrderRequest processes a new order from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	stationID := env.Src.Station
+	d.dbg("order request: station=%s uuid=%s type=%s payload_type=%s delivery=%s pickup=%s",
+		stationID, p.OrderUUID, p.OrderType, p.PayloadTypeCode, p.DeliveryNode, p.PickupNode)
 
 	// Create order record
 	order := &store.Order{
@@ -54,6 +63,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	pt, err := d.db.GetPayloadTypeByName(p.PayloadTypeCode)
 	if err != nil {
 		log.Printf("dispatch: payload type %q not found: %v", p.PayloadTypeCode, err)
+		d.dbg("error: payload type %q not found: %v", p.PayloadTypeCode, err)
 		d.sendError(env, p.OrderUUID, "payload_type_error", fmt.Sprintf("payload type %q not found", p.PayloadTypeCode))
 		return
 	}
@@ -64,6 +74,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		_, err := d.db.GetNodeByName(p.DeliveryNode)
 		if err != nil {
 			log.Printf("dispatch: delivery node %q not found: %v", p.DeliveryNode, err)
+			d.dbg("error: delivery node %q not found: %v", p.DeliveryNode, err)
 			d.sendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("delivery node %q not found", p.DeliveryNode))
 			return
 		}
@@ -97,9 +108,11 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 	// FIFO source selection for payloads
 	source, err := d.db.FindSourcePayloadFIFO(payloadTypeCode)
 	if err != nil {
+		d.dbg("retrieve: no source payload for type %s", payloadTypeCode)
 		d.failOrder(order, env, "no_source", fmt.Sprintf("no source payload found for type %s", payloadTypeCode))
 		return
 	}
+	d.dbg("retrieve: FIFO source payload=%d type=%s node=%v", source.ID, payloadTypeCode, source.NodeID)
 
 	// Claim the payload to prevent double-dispatch
 	if err := d.db.ClaimPayload(source.ID, order.ID); err != nil {
@@ -148,11 +161,13 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 			if p.PayloadTypeName == payloadTypeCode && p.ClaimedBy == nil {
 				found = true
 				if err := d.db.ClaimPayload(p.ID, order.ID); err == nil {
+					d.dbg("move: claimed payload=%d type=%s at %s", p.ID, payloadTypeCode, order.PickupNode)
 					break
 				}
 			}
 		}
 		if !found {
+			d.dbg("move: no unclaimed %s payload at %s", payloadTypeCode, order.PickupNode)
 			d.failOrder(order, env, "no_payload", fmt.Sprintf("no unclaimed %s payload at %s", payloadTypeCode, order.PickupNode))
 			return
 		}
@@ -179,9 +194,11 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope) {
 
 	destNode, err := d.db.FindStorageDestinationForPayload(payloadTypeID)
 	if err != nil {
+		d.dbg("store: no available storage node")
 		d.failOrder(order, env, "no_storage", "no available storage node found")
 		return
 	}
+	d.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
 	order.DeliveryNode = destNode.Name
 	d.db.UpdateOrderDeliveryNode(order.ID, destNode.Name)
 
@@ -224,13 +241,18 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 		Priority:   order.Priority,
 	}
 
+	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s(%s) to=%s(%s) priority=%d",
+		order.ID, vendorOrderID, sourceNode.Name, sourceNode.VendorLocation, destNode.Name, destNode.VendorLocation, order.Priority)
+
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)
+		d.dbg("fleet dispatch failed: %v", err)
 		d.failOrder(order, env, "fleet_failed", err.Error())
 		return
 	}
 
 	log.Printf("dispatch: order %d dispatched as %s (%s -> %s)", order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
+	d.dbg("fleet dispatch ok: order=%d vendor_id=%s", order.ID, vendorOrderID)
 
 	d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
 	d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID))
@@ -244,6 +266,7 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 // HandleOrderCancel processes a cancellation request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	stationID := env.Src.Station
+	d.dbg("cancel request: station=%s uuid=%s reason=%s", stationID, p.OrderUUID, p.Reason)
 
 	order, err := d.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
@@ -255,6 +278,9 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	if order.VendorOrderID != "" && order.Status != StatusConfirmed && order.Status != StatusFailed && order.Status != StatusCancelled {
 		if err := d.backend.CancelOrder(order.VendorOrderID); err != nil {
 			log.Printf("dispatch: cancel vendor order %s: %v", order.VendorOrderID, err)
+			d.dbg("cancel fleet error: vendor_id=%s: %v", order.VendorOrderID, err)
+		} else {
+			d.dbg("cancel fleet ok: vendor_id=%s", order.VendorOrderID)
 		}
 	}
 
@@ -286,6 +312,7 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 // HandleOrderReceipt processes a delivery confirmation from ShinGo Edge.
 func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt) {
 	stationID := env.Src.Station
+	d.dbg("delivery receipt: station=%s uuid=%s type=%s count=%.1f", stationID, p.OrderUUID, p.ReceiptType, p.FinalCount)
 
 	order, err := d.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
@@ -302,6 +329,8 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 
 // HandleOrderRedirect processes a redirect request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect) {
+	d.dbg("redirect: uuid=%s new_dest=%s", p.OrderUUID, p.NewDeliveryNode)
+
 	order, err := d.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
 		log.Printf("dispatch: redirect order %s not found: %v", p.OrderUUID, err)
@@ -343,6 +372,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 // HandleOrderStorageWaybill processes a storage waybill from ShinGo Edge.
 func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
 	stationID := env.Src.Station
+	d.dbg("storage waybill: station=%s uuid=%s type=%s pickup=%s", stationID, p.OrderUUID, p.OrderType, p.PickupNode)
 
 	order := &store.Order{
 		EdgeUUID:    p.OrderUUID,
@@ -408,6 +438,7 @@ func (d *Dispatcher) sendAck(env *protocol.Envelope, orderUUID string, shingoOrd
 		log.Printf("dispatch: encode ack reply: %v", err)
 		return
 	}
+	d.dbg("sendAck: uuid=%s shingo_id=%d source=%s", orderUUID, shingoOrderID, sourceNode)
 	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.ack", stationID)
 }
 
@@ -428,5 +459,6 @@ func (d *Dispatcher) sendError(env *protocol.Envelope, orderUUID, errorCode, det
 		log.Printf("dispatch: encode error reply: %v", err)
 		return
 	}
+	d.dbg("sendError: uuid=%s code=%s detail=%s", orderUUID, errorCode, detail)
 	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.error", stationID)
 }

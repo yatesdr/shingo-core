@@ -2,7 +2,7 @@
 <div data-sse="dashboard">
   <h1 class="mb-2">Dashboard</h1>
 
-  <div class="grid grid-4 mb-3">
+  <div class="grid grid-6 mb-1">
     <div class="card stat">
       <div class="value">{{.TotalOrders}}</div>
       <div class="label">Active Orders</div>
@@ -16,7 +16,7 @@
         <span id="fleet-status" class="health {{if .FleetOK}}health-ok{{else}}health-fail{{end}}"></span>
         {{if .FleetOK}}OK{{else}}Down{{end}}
       </div>
-      <div class="label">Fleet</div>
+      <div class="label">Fleet Manager ({{.FleetName}})</div>
     </div>
     <div class="card stat">
       <div class="value">
@@ -25,7 +25,19 @@
       </div>
       <div class="label">Messaging</div>
     </div>
+    <div class="card stat">
+      <div class="value">
+        <span id="redis-status" class="health {{if .RedisOK}}health-ok{{else}}health-fail{{end}}"></span>
+        {{if .RedisOK}}OK{{else}}Down{{end}}
+      </div>
+      <div class="label">Redis</div>
+    </div>
+    <div class="card stat">
+      <div class="value">{{.PollerActive}}</div>
+      <div class="label">Polling Orders</div>
+    </div>
   </div>
+  <div class="text-muted mb-3" style="font-size:0.8rem;text-align:right;">SSE clients: {{.SSEClients}}</div>
 
   {{if .ActiveOrders}}
   <div class="card">
