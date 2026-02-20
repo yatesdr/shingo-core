@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"fmt"
 	"log"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingocore/config"
@@ -39,6 +42,8 @@ type Engine struct {
 	logFn          LogFunc
 	debugLog       func(string, ...any)
 	stopChan       chan struct{}
+	stopOnce       sync.Once
+	sceneSyncing   atomic.Bool
 	fleetConnected bool
 	msgConnected   bool
 	redisConnected bool
@@ -106,14 +111,14 @@ func (e *Engine) Start() {
 	// Start periodic connection health check
 	go e.connectionHealthLoop()
 
+	// Start robot status refresh loop (2s)
+	go e.robotRefreshLoop()
+
 	e.logFn("engine: started")
 }
 
 func (e *Engine) Stop() {
-	select {
-	case e.stopChan <- struct{}{}:
-	default:
-	}
+	e.stopOnce.Do(func() { close(e.stopChan) })
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
@@ -136,6 +141,14 @@ func (e *Engine) checkConnectionStatus() {
 		if !e.fleetConnected {
 			e.fleetConnected = true
 			e.Events.Emit(Event{Type: EventFleetConnected, Payload: ConnectionEvent{Detail: e.fleet.Name() + " connected"}})
+			go func() {
+				total, created, deleted, err := e.SceneSync()
+				if err != nil {
+					e.logFn("engine: auto scene sync: %v", err)
+					return
+				}
+				e.logFn("engine: auto scene sync: %d points, created %d, deleted %d nodes", total, created, deleted)
+			}()
 		}
 	} else {
 		if e.fleetConnected {
@@ -329,6 +342,56 @@ func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) 
 		e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{
 			NodeID: n.ID, NodeName: n.Name, Action: "updated",
 		}})
+	}
+}
+
+// SceneSync loads scene data from the fleet backend and syncs nodes.
+// It is guarded by an atomic bool to prevent concurrent runs.
+func (e *Engine) SceneSync() (int, int, int, error) {
+	if !e.sceneSyncing.CompareAndSwap(false, true) {
+		return 0, 0, 0, fmt.Errorf("scene sync already in progress")
+	}
+	defer e.sceneSyncing.Store(false)
+
+	syncer, ok := e.fleet.(fleet.SceneSyncer)
+	if !ok {
+		return 0, 0, 0, fmt.Errorf("fleet backend does not support scene sync")
+	}
+	areas, err := syncer.GetSceneAreas()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	total, locSet := e.SyncScenePoints(areas)
+	created, deleted := e.SyncFleetNodes(locSet)
+	return total, created, deleted, nil
+}
+
+// robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated.
+func (e *Engine) robotRefreshLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-ticker.C:
+			if !e.fleetConnected {
+				continue
+			}
+			rl, ok := e.fleet.(fleet.RobotLister)
+			if !ok {
+				continue
+			}
+			robots, err := rl.GetRobotsStatus()
+			if err != nil {
+				e.dbg("engine: robot refresh: %v", err)
+				continue
+			}
+			e.Events.Emit(Event{
+				Type:    EventRobotsUpdated,
+				Payload: RobotsUpdatedEvent{Robots: robots},
+			})
+		}
 	}
 }
 

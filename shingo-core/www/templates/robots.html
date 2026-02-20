@@ -18,8 +18,7 @@
   </div>
 
   {{if .Robots}}
-  <div class="robot-grid" id="robot-grid"
-       hx-get="/robots" hx-trigger="every 5s" hx-select="#robot-grid" hx-target="#robot-grid" hx-swap="outerHTML">
+  <div class="robot-grid" id="robot-grid">
     {{range .Robots}}
     {{$state := robotState .}}
     <div class="robot-tile robot-{{$state}}"

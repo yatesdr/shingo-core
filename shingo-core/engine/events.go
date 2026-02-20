@@ -1,5 +1,7 @@
 package engine
 
+import "shingocore/fleet"
+
 const (
 	EventOrderReceived EventType = iota + 1
 	EventOrderDispatched
@@ -16,6 +18,7 @@ const (
 	EventMessagingDisconnected
 	EventRedisConnected
 	EventRedisDisconnected
+	EventRobotsUpdated
 )
 
 // --- Event payloads ---
@@ -92,4 +95,8 @@ type CorrectionAppliedEvent struct {
 
 type ConnectionEvent struct {
 	Detail string
+}
+
+type RobotsUpdatedEvent struct {
+	Robots []fleet.RobotStatus
 }

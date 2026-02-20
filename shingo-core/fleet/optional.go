@@ -46,6 +46,23 @@ type RobotStatus struct {
 	LastStation    string
 }
 
+// State returns a computed state string for the robot: offline, error, busy, paused, or ready.
+func (r RobotStatus) State() string {
+	if !r.Connected {
+		return "offline"
+	}
+	if r.Emergency || r.Blocked {
+		return "error"
+	}
+	if r.Busy {
+		return "busy"
+	}
+	if !r.Available {
+		return "paused"
+	}
+	return "ready"
+}
+
 // OccupancyDetail is a vendor-neutral representation of a location's occupancy status.
 type OccupancyDetail struct {
 	ID       string

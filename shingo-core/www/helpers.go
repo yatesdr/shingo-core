@@ -95,19 +95,7 @@ func templateFuncs() template.FuncMap {
 			return *p
 		},
 		"robotState": func(r fleet.RobotStatus) string {
-			if !r.Connected {
-				return "offline"
-			}
-			if r.Emergency || r.Blocked {
-				return "error"
-			}
-			if r.Busy {
-				return "busy"
-			}
-			if !r.Available {
-				return "paused"
-			}
-			return "ready"
+			return r.State()
 		},
 		"pct": func(f float64) string {
 			return fmt.Sprintf("%.0f", f)

@@ -180,21 +180,12 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleNodeSyncFleet(w http.ResponseWriter, r *http.Request) {
-	syncer, ok := h.engine.Fleet().(fleet.SceneSyncer)
-	if !ok {
-		log.Printf("node sync: fleet backend does not support scene sync")
-		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
-		return
-	}
-	areas, err := syncer.GetSceneAreas()
+	total, created, deleted, err := h.engine.SceneSync()
 	if err != nil {
-		log.Printf("node sync: fleet error: %v", err)
-		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
-		return
+		log.Printf("node sync: %v", err)
+	} else {
+		log.Printf("node sync: %d scene points, created %d, deleted %d nodes", total, created, deleted)
 	}
-	pointsTotal, locationSet := h.engine.SyncScenePoints(areas)
-	created, deleted := h.engine.SyncFleetNodes(locationSet)
-	log.Printf("node sync: %d scene points, created %d, deleted %d nodes", pointsTotal, created, deleted)
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }
 
